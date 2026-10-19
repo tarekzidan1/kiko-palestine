@@ -1,0 +1,19 @@
+{
+  "name": "kiko-palestine-store",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Bilingual (Arabic/English) beauty e-commerce store for Palestine — Node.js + SQLite, zero npm dependencies",
+  "main": "server.js",
+  "engines": {
+    "node": ">=22.13.0"
+  },
+  "scripts": {
+    "start": "node --disable-warning=ExperimentalWarning server.js",
+    "dev": "node --disable-warning=ExperimentalWarning --watch server.js",
+    "seed": "node --disable-warning=ExperimentalWarning scripts/seed.js",
+    "test": "node --disable-warning=ExperimentalWarning scripts/test.js",
+    "reset-admin": "node --disable-warning=ExperimentalWarning scripts/reset-admin.js",
+    "check-i18n": "node scripts/check-i18n.js"
+  },
+  "license": "UNLICENSED"
+}
