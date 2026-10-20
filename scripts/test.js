@@ -87,7 +87,7 @@ const waitFor = async (fn, ms = 4000) => { const t = Date.now(); while (Date.now
     console.log('Storefront');
     await step('root redirects to a language', async () => { const r = await shopper.get('/'); assert.equal(r.status, 302); assert.match(r.location, /^\/(ar|en)$/); });
     await step('Arabic home renders RTL with products', async () => { const r = await shopper.get('/ar'); assert.equal(r.status, 200); assert.match(r.text, /<html lang="ar" dir="rtl">/); assert.match(r.text, /class="card/); assert.ok(shopper.jar.get('csrf')); });
-    await step('English home renders LTR', async () => { const r = await shopper.get('/en'); assert.match(r.text, /<html lang="en" dir="ltr">/); assert.match(r.text, /Best Sellers/); assert.match(r.text, /Kiko Palestine/); });
+    await step('English home renders LTR', async () => { const r = await shopper.get('/en'); assert.match(r.text, /<html lang="en" dir="ltr">/); assert.match(r.text, /Best Sellers/); });
     await step('category, product, search, flags and pages', async () => {
       for (const u of ['/ar/c/makeup', '/en/c/lipstick', '/ar/p/cloud-matte-lipstick', '/en/search?q=lipstick', '/ar/search?q=احمر', '/ar/best-sellers', '/en/sale', '/ar/new', '/ar/page/shipping', '/en/contact', '/ar/track', '/sitemap.xml', '/robots.txt']) assert.equal((await shopper.get(u)).status, 200, u);
       assert.equal((await shopper.get('/ar/p/does-not-exist')).status, 404);
@@ -180,7 +180,7 @@ const waitFor = async (fn, ms = 4000) => { const t = Date.now(); while (Date.now
       const dsh = await admin.get('/admin'); assert.equal(dsh.status, 200); assert.match(dsh.text, /Sales — last 14 days/);
     });
     await step('all admin pages load', async () => {
-      for (const u of ['/admin/orders', `/admin/orders/${order.id}`, `/admin/orders/${order.id}/invoice`, '/admin/products', '/admin/products/new', `/admin/products/${mascara.id}`, '/admin/products/import', '/admin/r/categories', '/admin/r/categories/new', '/admin/r/zones', '/admin/r/coupons', '/admin/r/banners', '/admin/r/sections', '/admin/r/pages', '/admin/customers', '/admin/messages', '/admin/subscribers', '/admin/settings', '/admin/orders/export.csv', '/admin/products/export.csv', '/admin/customers/export.csv', '/admin/subscribers/export.csv'])
+      for (const u of ['/admin/orders', `/admin/orders/${order.id}`, `/admin/orders/${order.id}/invoice`, '/admin/products', '/admin/products/new', `/admin/products/${mascara.id}`, '/admin/products/import', '/admin/r/categories', '/admin/r/categories/new', '/admin/r/zones', '/admin/r/coupons', '/admin/r/banners', '/admin/r/sections', '/admin/r/pages', '/admin/stats', '/admin/stats?period=12m', '/admin/customers', '/admin/messages', '/admin/subscribers', '/admin/settings', '/admin/orders/export.csv', '/admin/products/export.csv', '/admin/customers/export.csv', '/admin/subscribers/export.csv'])
         assert.equal((await admin.get(u)).status, 200, u);
     });
     await step('cancelling an order restores stock; confirming takes it again', async () => {
@@ -304,8 +304,64 @@ const waitFor = async (fn, ms = 4000) => { const t = Date.now(); while (Date.now
     await step('status change emails the customer', async () => {
       const before = mails.length;
       await admin.post(`/admin/orders/${cardOrder.id}/status`, { status: 'shipped', notify: '1' });
-      assert.ok(await waitFor(() => mails.length > before));
-      assert.match(decodeMail(mails[mails.length - 1]).text, /on its way/);
+      // other emails (e.g. the owner's copy of an earlier order) may arrive in between — look for this one
+      assert.ok(await waitFor(() => mails.slice(before).some((m) => /^To: omar@test\.ps/m.test(m) && /on its way/.test(decodeMail(m).text))), 'shipped email');
+    });
+
+    console.log('PDF invoices');
+    // the PDF attached to an email (null when there is none)
+    const attachedPdf = (raw) => { const m = raw.match(/Content-Disposition: attachment; filename="(invoice-[\w-]+\.pdf)"\n\n([\s\S]*?)\n--/); return m ? { name: m[1], buf: Buffer.from(m[2].replace(/\n/g, ''), 'base64') } : null; };
+    const isPdf = (buf) => buf.subarray(0, 5).toString() === '%PDF-' && buf.subarray(-6).toString().includes('%%EOF') && buf.includes('startxref');
+    const getBin = async (b, url) => { const r = await fetch(BASE + url, { redirect: 'manual', headers: { cookie: [...b.jar].map(([k, v]) => `${k}=${v}`).join('; ') } }); return { status: r.status, type: r.headers.get('content-type'), disp: r.headers.get('content-disposition'), buf: Buffer.from(await r.arrayBuffer()) }; };
+    await step('paid card order: customer + owner emails carry the PDF invoice', async () => {
+      const toOmar = mails.find((m) => /^To: omar@test\.ps/m.test(m) && attachedPdf(m));
+      assert.ok(toOmar, 'customer email has an invoice attachment');
+      const pdf = attachedPdf(toOmar); assert.equal(pdf.name, `invoice-${cardOrder.number}.pdf`); assert.ok(isPdf(pdf.buf), 'valid PDF');
+      const title = /\/Title <FEFF([0-9A-F]+)>/.exec(pdf.buf.toString('latin1'));
+      assert.ok(title && Buffer.from(title[1], 'hex').swap16().toString('utf16le').includes(cardOrder.number), 'PDF title has the order number');
+      assert.ok(mails.some((m) => /^To: owner@test\.ps/m.test(m) && attachedPdf(m)), 'owner email has the invoice');
+    });
+    await step('cash-on-delivery order: confirmation email with invoice right away', async () => {
+      const before = mails.length;
+      const b = browser(); await b.get('/ar');
+      await b.api('/api/cart/add', { product_id: mascara.id, variant_id: 0, qty: 2 });
+      const r = await b.post('/ar/checkout', { name: 'ريم خليل', phone: '0594445555', email: 'reem@test.ps', zone_id: '1', city: 'الخليل', address: 'شارع عين سارة', notes: 'بعد الساعة 5', payment: 'cod' });
+      assert.equal(r.status, 303);
+      assert.ok(await waitFor(() => mails.slice(before).some((m) => /^To: reem@test\.ps/m.test(m))), 'customer email');
+      const m = mails.slice(before).find((x) => /^To: reem@test\.ps/m.test(x));
+      const pdf = attachedPdf(m); assert.ok(pdf && isPdf(pdf.buf)); assert.match(decodeMail(m).text, /مرفقة/);
+    });
+    await step('invoice download: secret link works, strangers get 404, admin gets AR + EN', async () => {
+      const x = db(); const o = x.prepare('SELECT * FROM orders WHERE id = ?').get(cardOrder.id); x.close();
+      const ok = await getBin(browser(), `/${o.lang}/order/${o.number}/invoice.pdf?t=${o.token}`);
+      assert.equal(ok.status, 200); assert.equal(ok.type, 'application/pdf'); assert.ok(isPdf(ok.buf)); assert.match(ok.disp, /inline; filename="invoice-KP-\d+\.pdf"/);
+      assert.equal((await getBin(browser(), `/en/order/${o.number}/invoice.pdf`)).status, 404);
+      assert.equal((await getBin(browser(), `/en/order/${o.number}/invoice.pdf?t=wrong-token`)).status, 404);
+      assert.equal((await getBin(cust, `/admin/orders/${o.id}/invoice.pdf`)).status, 303, 'customers cannot use the admin link');
+      for (const l of ['ar', 'en']) { const a = await getBin(admin, `/admin/orders/${o.id}/invoice.pdf?lang=${l}`); assert.equal(a.status, 200); assert.ok(isPdf(a.buf), l); }
+      const page = await browser().get(`/${o.lang}/order/${o.number}?t=${o.token}`); assert.match(page.text, /data-invoice/);
+      assert.match((await admin.get(`/admin/orders/${o.id}`)).text, /data-email-invoice/);
+    });
+    await step('admin can email the invoice to the customer again', async () => {
+      const before = mails.length;
+      const r = await admin.post(`/admin/orders/${cardOrder.id}/email-invoice`, {});
+      assert.equal(r.status, 303); assert.match(r.location, /f=mailed/);
+      assert.ok(await waitFor(() => mails.slice(before).some((m) => /^To: omar@test\.ps/m.test(m) && attachedPdf(m))), 'invoice email');
+      const m = mails.slice(before).find((x) => /^To: omar@test\.ps/m.test(x) && attachedPdf(x)); assert.ok(isPdf(attachedPdf(m).buf));
+    });
+    await step('marking an order paid can email the customer a receipt + invoice', async () => {
+      const x = db(); const o = x.prepare("SELECT * FROM orders WHERE email = 'reem@test.ps' ORDER BY id DESC LIMIT 1").get(); x.close();
+      const before = mails.length;
+      await admin.post(`/admin/orders/${o.id}/payment`, { payment_status: 'paid', notify_pay: '1' });
+      assert.ok(await waitFor(() => mails.slice(before).some((m) => /^To: reem@test\.ps/m.test(m) && attachedPdf(m))), 'receipt email');
+      assert.match((await admin.get('/admin/orders?status=active')).text, /All except cancelled/);
+    });
+    await step('invoice settings: VAT, tax ID and note are saved and validated', async () => {
+      await admin.post('/admin/settings', { vat_rate: '250', tax_id: '562345678', invoice_note_en: 'Returns within 14 days.', invoice_email_enabled: '1' });
+      const x = db(); const s = Object.fromEntries(x.prepare("SELECT key, value FROM settings WHERE key IN ('vat_rate', 'tax_id')").all().map((r) => [r.key, r.value])); x.close();
+      assert.equal(s.vat_rate, '100'); assert.equal(s.tax_id, '562345678');
+      await admin.post('/admin/settings', { vat_rate: '16' });
+      const a = await getBin(admin, `/admin/orders/${cardOrder.id}/invoice.pdf?lang=en`); assert.ok(isPdf(a.buf));
     });
     console.log('PayTabs integration (simulated gateway)');
     await step('return-URL signature matches the PayTabs documentation example', async () => {
@@ -333,6 +389,7 @@ const waitFor = async (fn, ms = 4000) => { const t = Date.now(); while (Date.now
         res.writeHead(404); res.end('{}');
       });
     }).listen(0, '127.0.0.1');
+    fake.unref(); // never keeps the test process alive after a failure
     await new Promise((r) => fake.once('listening', r));
     await step('PayTabs: request → redirect → return → query → paid', async () => {
       await admin.post('/admin/settings', { card_provider: 'paytabs', paytabs_profile_id: '123456', paytabs_server_key: 'SKEY-TEST', paytabs_domain: `http://127.0.0.1:${fake.address().port}`, paytabs_currency: 'USD', paytabs_rate: '0.27' });
@@ -359,8 +416,96 @@ const waitFor = async (fn, ms = 4000) => { const t = Date.now(); while (Date.now
       const sig = require('node:crypto').createHmac('sha256', 'SKEY-TEST').update(raw).digest('hex');
       const good = await fetch(`${BASE}/pay/paytabs/callback`, { method: 'POST', headers: { 'content-type': 'application/json', signature: sig }, body: raw });
       assert.equal(good.status, 200);
+      // return + callback both confirmed the payment, but the customer gets exactly one "payment received" email
+      await waitFor(() => mails.some((m) => /^To: rami@test\.ps/m.test(m)));
+      await new Promise((r) => setTimeout(r, 400));
+      assert.equal(mails.filter((m) => /^To: rami@test\.ps/m.test(m)).length, 1);
     });
     fake.close();
+
+    console.log('Statistics & order filters');
+    const kpis = (text) => Object.fromEntries([...text.matchAll(/data-kpi="(\w+)"><span>[^<]*<\/span><strong>([^<]*)<\/strong>/g)].map(([, k, v]) => [k, Number(v.replace(/[^\d.%-]/g, '').replace('%', ''))]));
+    await step('statistics page: numbers match the database (all time, all orders)', async () => {
+      const r = await admin.get('/admin/stats?period=all&status=all'); assert.equal(r.status, 200);
+      const k = kpis(r.text);
+      const x = db(); const o = x.prepare('SELECT COUNT(*) n, SUM(total) s, SUM(discount) d FROM orders').get(); const it = x.prepare('SELECT SUM(qty) q FROM order_items').get(); const paid = x.prepare("SELECT COALESCE(SUM(total), 0) s FROM orders WHERE payment_status = 'paid'").get(); x.close();
+      assert.equal(k.orders, o.n); assert.equal(k.revenue, Math.round(o.s * 100) / 100); assert.equal(k.items, it.q); assert.equal(k.collected, Math.round(paid.s * 100) / 100); assert.equal(k.discounts, Math.round(o.d * 100) / 100);
+      for (const b of ['products', 'categories', 'status', 'zone', 'method', 'pay', 'customers', 'weekdays', 'coupons']) assert.match(r.text, new RegExp(`data-breakdown="${b}"`), b);
+    });
+    await step('statistics filters: card-only, cancelled-only, custom dates, bad input', async () => {
+      const x = db(); const card = x.prepare("SELECT COUNT(*) n FROM orders WHERE payment_method = 'card' AND status <> 'cancelled'").get().n; const canc = x.prepare("SELECT COUNT(*) n FROM orders WHERE status = 'cancelled'").get().n; x.close();
+      assert.equal(kpis((await admin.get('/admin/stats?period=today&method=card')).text).orders, card);
+      assert.equal(kpis((await admin.get('/admin/stats?period=7d&status=cancelled')).text).orders, canc);
+      const day = new Date().toISOString().slice(0, 10), old = '2020-01-01';
+      assert.equal(kpis((await admin.get(`/admin/stats?period=custom&from=${old}&to=2020-01-31`)).text).orders, 0, 'nothing in Jan 2020');
+      assert.match((await admin.get(`/admin/stats?period=custom&from=${old}&to=${day}`)).text, /data-range="2020-01-01\.\./);
+      assert.equal((await admin.get('/admin/stats?period=x&status=y&method=z&pay=q&zone=abc&from=2026-99-99')).status, 200);
+    });
+    await step('filtered CSV export + orders list dropdown filters', async () => {
+      const x = db(); const card = x.prepare("SELECT COUNT(*) n FROM orders WHERE payment_method = 'card'").get().n; const all = x.prepare('SELECT COUNT(*) n FROM orders').get().n; x.close();
+      const csv = (await admin.get('/admin/stats/export.csv?period=all&status=all&method=card')).text.trim().split('\r\n');
+      assert.equal(csv.length, card + 1); assert.ok(csv.slice(1).every((l) => /,card,(unpaid|paid|failed|refunded),/.test(l)));
+      const list = await admin.get('/admin/orders?method=card&period=30d');
+      assert.match(list.text, new RegExp(`>${card} total ·`));
+      assert.equal((await admin.get('/admin/orders/export.csv?method=cod')).text.trim().split('\r\n').length, all - card + 1);
+    });
+
+    console.log('Easy product management');
+    const prod = (id) => { const x = db(); const p = x.prepare('SELECT * FROM products WHERE id = ?').get(id); x.close(); return p; };
+    await step('quick edit from the list: price, sale price, stock (+ validation)', async () => {
+      const r = await admin.api(`/admin/products/${mascara.id}/quick`, { price: '80', sale_price: '60', stock: '25' });
+      assert.equal(r.json.ok, true); assert.equal(r.json.off, 25);
+      let p = prod(mascara.id); assert.equal(p.price, 80); assert.equal(p.sale_price, 60); assert.equal(p.stock, 25);
+      const bad = await admin.api(`/admin/products/${mascara.id}/quick`, { price: '80', sale_price: '90' });
+      assert.equal(bad.status, 400); assert.match(bad.json.error, /lower/);
+      const before = prod(lip.pid).stock;
+      await admin.api(`/admin/products/${lip.pid}/quick`, { price: String(prod(lip.pid).price), stock: '999' });
+      assert.equal(prod(lip.pid).stock, before, 'stock of a product with shades is set per shade');
+      const form = await admin.post(`/admin/products/${mascara.id}/quick`, { price: '80', sale_price: '', stock: '30', back: '/admin/products?q=mascara' });
+      assert.equal(form.status, 303); assert.match(form.location, /^\/admin\/products\?q=mascara&f=saved/);
+      p = prod(mascara.id); assert.equal(p.sale_price, null); assert.equal(p.stock, 30);
+      const list = await admin.get('/admin/products'); assert.match(list.text, /data-quick/); assert.match(list.text, /data-bulk/);
+    });
+    await step('show / hide a product with one click', async () => {
+      const p = prod(mascara.id);
+      assert.equal((await admin.api(`/admin/products/${p.id}/toggle`, {})).json.active, 0);
+      assert.equal((await browser().get('/en/p/' + p.slug)).status, 404, 'hidden products are not in the store');
+      assert.equal((await admin.api(`/admin/products/${p.id}/toggle`, {})).json.active, 1);
+      assert.equal((await browser().get('/en/p/' + p.slug)).status, 200);
+    });
+    await step('bulk actions: sale %, categories, hide/show, labels, delete', async () => {
+      const copy = await admin.post(`/admin/products/${newId}/duplicate`, {}); const copyId = +copy.location.match(/products\/(\d+)/)[1];
+      const ids = [String(mascara.id), String(copyId)];
+      const x = db(); const cat = x.prepare("SELECT id FROM categories WHERE slug = 'skincare'").get().id; x.close();
+      const go = (action, extra = {}) => admin.post('/admin/products/bulk', { 'ids[]': ids, action, ...extra });
+      assert.match((await go('sale', { percent: '25' })).location, /f=saved/);
+      assert.equal(prod(mascara.id).sale_price, 60); // 80 − 25%
+      assert.match((await go('sale', { percent: '0' })).location, /f=err/);
+      await go('cat_add', { cat: String(cat) });
+      let y = db(); assert.equal(y.prepare('SELECT COUNT(*) n FROM product_categories WHERE category_id = ? AND product_id IN (?, ?)').get(cat, mascara.id, copyId).n, 2); y.close();
+      await go('cat_remove', { cat: String(cat) });
+      y = db(); assert.equal(y.prepare('SELECT COUNT(*) n FROM product_categories WHERE category_id = ? AND product_id IN (?, ?)').get(cat, mascara.id, copyId).n, 0); y.close();
+      await go('hide'); assert.equal(prod(mascara.id).active, 0); await go('show'); assert.equal(prod(mascara.id).active, 1);
+      await go('new_on'); assert.equal(prod(copyId).is_new, 1); await go('sale_off'); assert.equal(prod(mascara.id).sale_price, null);
+      assert.match((await admin.post('/admin/products/bulk', { action: 'hide' })).location, /f=err/, 'nothing ticked');
+      await admin.post('/admin/products/bulk', { 'ids[]': [String(copyId)], action: 'delete' });
+      assert.equal(prod(copyId), undefined); assert.ok(prod(mascara.id));
+    });
+    await step('new product: one name is enough; "Save & add another"', async () => {
+      const r = await admin.post('/admin/products/new', { name_ar: 'مرطب يدين بالورد', price: '35', stock: '12', active: '1', images: '[]', 'cats[]': ['3'], next: 'new' });
+      assert.equal(r.status, 303); assert.match(r.location, /^\/admin\/products\/new\?f=saved/);
+      const x = db(); const p = x.prepare('SELECT * FROM products ORDER BY id DESC LIMIT 1').get(); x.close();
+      assert.equal(p.name_ar, 'مرطب يدين بالورد'); assert.equal(p.name_en, 'مرطب يدين بالورد'); assert.equal(p.price, 35);
+      const none = await admin.post('/admin/products/new', { name_ar: '', name_en: '', price: '10' }); assert.equal(none.status, 200); assert.match(none.text, /Please enter the product name/);
+    });
+    await step('a form error never loses the shades (they come back filled in)', async () => {
+      const x = db(); const vs = x.prepare('SELECT * FROM variants WHERE product_id = ? ORDER BY sort, id').all(newId); x.close();
+      assert.ok(vs.length >= 2);
+      const r = await admin.post(`/admin/products/${newId}`, { name_en: '', name_ar: '', price: '50', images: '[]', 'v_id[]': vs.map((v) => String(v.id)), 'v_name_en[]': vs.map((v) => v.name_en), 'v_name_ar[]': vs.map((v) => v.name_ar), 'v_color[]': vs.map((v) => v.color || ''), 'v_sku[]': vs.map((v) => v.sku || ''), 'v_stock[]': vs.map((v) => String(v.stock)), 'v_image[]': vs.map(() => '') });
+      assert.equal(r.status, 200);
+      for (const v of vs) assert.ok(r.text.includes(`name="v_id[]" value="${v.id}"`), 'shade row ' + v.id + ' is kept in the form');
+      const y = db(); assert.equal(y.prepare('SELECT COUNT(*) n FROM variants WHERE product_id = ?').get(newId).n, vs.length); y.close();
+    });
 
     await step('backup download is a valid SQLite file', async () => { const r = await fetch(BASE + '/admin/backup', { headers: { cookie: [...admin.jar].map(([k, v]) => `${k}=${v}`).join('; ') } }); const buf = Buffer.from(await r.arrayBuffer()); assert.equal(buf.subarray(0, 15).toString(), 'SQLite format 3'); });
 

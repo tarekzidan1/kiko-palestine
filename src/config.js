@@ -24,7 +24,7 @@ module.exports = {
   ROOT,
   PORT: +env('PORT', 3000),
   HOST: env('HOST', '0.0.0.0'),
-  BASE_URL: env('BASE_URL', '').replace(/\/$/, ''), // public URL, e.g. https://kiko.ps (needed for payments/emails)
+  BASE_URL: env('BASE_URL', '').replace(/\/$/, ''), // public URL, e.g. https://yourdomain.ps (needed for payments/emails)
   DB_PATH: path.resolve(ROOT, env('DB_PATH', 'data/store.db')),
   UPLOAD_DIR: path.resolve(ROOT, env('UPLOAD_DIR', 'data/uploads')), // keep data + uploads together (one folder to back up)
   PROD: env('NODE_ENV') === 'production',
@@ -34,8 +34,11 @@ module.exports = {
   COOKIE_SECURE: bool('COOKIE_SECURE', env('NODE_ENV') === 'production'),
   DEFAULT_LANG: env('DEFAULT_LANG', 'ar'),
   DEMO_DATA: !/^(0|off|false|no)$/i.test(env('DEMO_DATA', 'on')), // load the demo catalog on the very first start
+  // First admin, created automatically when the database has no admin yet.
+  // Change it after hosting in Admin → My account (or with: npm run reset-admin).
   ADMIN_EMAIL: env('ADMIN_EMAIL', 'tarek@admin.com'),
-  ADMIN_PASSWORD: env('ADMIN_PASSWORD', 'admin'),
+  ADMIN_PASSWORD: env('ADMIN_PASSWORD', 'tarek123'),
+  STARTER_PASSWORD: 'tarek123', // while an admin still uses this password the admin panel shows a reminder
   // Optional overrides (otherwise set in Admin → Settings)
   SMTP_URL: env('SMTP_URL', ''), // smtps://user:pass@smtp.host:465
   PAYTABS_PROFILE_ID: env('PAYTABS_PROFILE_ID', ''),

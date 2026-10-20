@@ -24,6 +24,8 @@ const AICONS = {
   home: '<path d="M3 11l9-7 9 7v9H3z"/><path d="M9 20v-6h6v6"/>',
   print: '<path d="M7 9V3h10v6"/><rect x="3" y="9" width="18" height="8" rx="2"/><path d="M7 14h10v7H7z"/>',
   copy: '<rect x="8" y="8" width="13" height="13" rx="2"/><path d="M16 8V3H3v13h5"/>',
+  chart: '<path d="M3 21h18"/><rect x="5" y="11" width="3" height="7" rx="1"/><rect x="10.5" y="6" width="3" height="12" rx="1"/><rect x="16" y="13" width="3" height="5" rx="1"/>',
+  bolt: '<path d="M13 3 5 14h6l-1 7 8-11h-6z"/>',
 };
 const sprite = raw(`<svg width="0" height="0" class="sprite" aria-hidden="true">${Object.entries(AICONS).map(([k, d]) => `<symbol id="i-${k}" viewBox="0 0 24 24">${d}</symbol>`).join('')}</svg>`);
 const ic = (n) => raw(`<svg class="ic" aria-hidden="true"><use href="#i-${n}"/></svg>`);
@@ -31,18 +33,18 @@ const csrf = (ctx) => html`<input type="hidden" name="_csrf" value="${ctx.csrf}"
 const sel = (cond) => (cond ? raw(' selected') : '');
 const chk = (cond) => (cond ? raw(' checked') : '');
 const flash = (ctx) => {
-  const m = { saved: ['ok', 'adm.saved'], deleted: ['ok', 'adm.deleted'], imported: ['ok', 'adm.imported'], sent: ['ok', 'adm.test_sent'], err: ['err', 'adm.error'] }[ctx.query.f];
+  const m = { saved: ['ok', 'adm.saved'], deleted: ['ok', 'adm.deleted'], imported: ['ok', 'adm.imported'], sent: ['ok', 'adm.test_sent'], mailed: ['ok', 'adm.mailed'], err: ['err', 'adm.error'] }[ctx.query.f];
   return m ? html`<div class="alert alert-${m[0]}">${ctx.t(m[1])}${ctx.query.m ? ' — ' + ctx.query.m : ''}</div>` : '';
 };
 const badge = (ctx, st) => html`<span class="st st-${st}">${ctx.t('status.' + st)}</span>`;
 const pbadge = (ctx, st) => html`<span class="pay pay-${st}">${ctx.t('paystatus.' + st)}</span>`;
 
 const NAV = [
-  ['/admin', 'adm.dashboard', 'dash'], ['/admin/orders', 'adm.orders', 'box'], ['/admin/products', 'adm.products', 'tag'],
+  ['/admin', 'adm.dashboard', 'dash'], ['/admin/stats', 'adm.stats', 'chart'], ['/admin/orders', 'adm.orders', 'box'], ['/admin/products', 'adm.products', 'tag'],
   ['/admin/r/categories', 'adm.categories', 'folder'], ['/admin/r/banners', 'adm.banners', 'image'], ['/admin/r/sections', 'adm.sections', 'layers'],
   ['/admin/r/coupons', 'adm.coupons', 'percent'], ['/admin/r/zones', 'adm.zones', 'truck'], ['/admin/r/pages', 'adm.pages', 'file'],
-  ['/admin/customers', 'adm.customers', 'users'], ['/admin/messages', 'adm.messages', 'inbox'], ['/admin/subscribers', 'adm.subscribers', 'mail'],
-  ['/admin/settings', 'adm.settings', 'cog'],
+  ['/admin/customers', 'adm.users', 'users'], ['/admin/messages', 'adm.messages', 'inbox'], ['/admin/subscribers', 'adm.subscribers', 'mail'],
+  ['/admin/settings', 'adm.settings', 'cog'], ['/admin/account', 'adm.my_account', 'user'],
 ];
 
 function layout(ctx, { title, body, active, counts = {} }) {
@@ -57,9 +59,10 @@ function layout(ctx, { title, body, active, counts = {} }) {
 <label for="nav-t" class="scrim"></label>
 <div class="main"><header class="top"><label for="nav-t" class="burger" aria-label="Menu">${ic('menu')}</label><h1>${title}</h1>
 <div class="top-end"><a href="/${lang}" target="_blank" rel="noopener">${ic('eye')} <span>${t('adm.view_store')}</span></a>
+<a href="/admin/account">${ic('user')} <span>${ctx.user?.name || ''}</span></a>
 <a href="/admin/lang?to=${lang === 'ar' ? 'en' : 'ar'}">${lang === 'ar' ? 'English' : 'العربية'}</a>
 <form method="post" action="/admin/logout">${csrf(ctx)}<button class="lnk">${ic('logout')} <span>${t('acc.logout')}</span></button></form></div></header>
-<div class="content">${flash(ctx)}${body}</div></div></body></html>`;
+<div class="content">${ctx.user?.must_change ? html`<div class="alert alert-err">${t('adm.starter_login_warning')} <a href="/admin/account"><b>${t('adm.my_account')} →</b></a></div>` : ''}${flash(ctx)}${body}</div></div></body></html>`;
 }
 
 function login(ctx, error) {
@@ -94,7 +97,7 @@ function dashboard(ctx, d) {
     ${kpi(t('adm.pending'), d.pending, html`<a href="/admin/orders?status=pending">${t('common.view')}</a>`)}
   </div>
   <div class="grid2">
-    <section class="panel"><h2>${t('adm.sales_14')}</h2>${chart(ctx, d.series)}</section>
+    <section class="panel"><h2>${t('adm.sales_14')} <a class="small" href="/admin/stats">${ic('chart')} ${t('st.more')}</a></h2>${chart(ctx, d.series)}</section>
     <section class="panel"><h2>${t('adm.top_products')}</h2>${d.top.length ? html`<table class="tbl"><tbody>${d.top.map((p) => html`<tr><td>${ctx.lang === 'ar' ? p.name_ar || p.name : p.name}</td><td class="num">×${p.q}</td><td class="num">${ctx.money(p.s)}</td></tr>`)}</tbody></table>` : html`<p class="muted">${t('adm.no_data')}</p>`}</section>
   </div>
   <div class="grid2">
@@ -114,21 +117,117 @@ function ordersTable(ctx, rows) {
   <td dir="ltr" class="nowrap">${fmtDate(o.created_at)}</td><td class="num">${ctx.money(o.total)}</td><td>${o.payment_method === 'card' ? ic('card') : ic('cash')} ${pbadge(ctx, o.payment_status)}</td><td>${badge(ctx, o.status)}</td></tr>`)}</tbody></table></div>`;
 }
 
-function orders(ctx, { rows, total, page, pages, q, status, counts, statuses }) {
+// dropdowns shared by Orders + Statistics
+const PERIOD_KEYS = ['today', 'yesterday', '7d', '30d', 'this_month', 'last_month', 'this_year', '12m', 'all', 'custom'];
+function filterFields(ctx, f, { zones, payStatuses, anyPeriod }) {
+  const { t, L } = ctx;
+  const o = (v, label, cur) => html`<option value="${v}"${sel(String(cur ?? '') === String(v))}>${label}</option>`;
+  const custom = f.period === 'custom';
+  return html`<label class="f"><span>${t('st.period')}</span><select name="period" data-period>${anyPeriod ? o('', t('st.p.any'), f.period) : ''}${PERIOD_KEYS.filter((k) => !(anyPeriod && k === 'all')).map((k) => o(k, t('st.p.' + k), f.period))}</select></label>
+    <label class="f custom-d"${custom ? '' : raw(' hidden')}><span>${t('st.from')}</span><input type="date" name="from" value="${f.from || ''}"${custom ? '' : raw(' disabled')}></label>
+    <label class="f custom-d"${custom ? '' : raw(' hidden')}><span>${t('st.to')}</span><input type="date" name="to" value="${f.to || ''}"${custom ? '' : raw(' disabled')}></label>
+    <label class="f"><span>${t('st.method')}</span><select name="method">${o('', t('st.any'), f.method)}${o('cod', t('pay.cod'), f.method)}${o('card', t('pay.card'), f.method)}</select></label>
+    <label class="f"><span>${t('st.pay')}</span><select name="pay">${o('', t('st.any'), f.pay)}${payStatuses.map((p) => o(p, t('paystatus.' + p), f.pay))}</select></label>
+    <label class="f"><span>${t('st.zone')}</span><select name="zone">${o('', t('st.any'), f.zone || '')}${zones.map((z) => o(z.id, L(z, 'name'), f.zone))}</select></label>`;
+}
+const qs = (o) => Object.entries(o).filter(([, v]) => v !== '' && v != null && v !== 0).map(([k, v]) => `${k}=${encodeURIComponent(v)}`).join('&');
+
+function orders(ctx, { rows, total, sum, page, pages, q, status, f, counts, statuses, payStatuses, zones }) {
   const { t } = ctx;
-  const body = html`<div class="bar">
-    <nav class="tabs"><a class="${!status ? 'on' : ''}" href="/admin/orders">${t('adm.all')} <b>${counts.all || 0}</b></a>${statuses.map((s) => html`<a class="${status === s ? 'on' : ''}" href="/admin/orders?status=${s}">${t('status.' + s)} <b>${counts[s] || 0}</b></a>`)}</nav>
-    <form class="search" method="get"><input type="hidden" name="status" value="${status || ''}"><input name="q" value="${q || ''}" placeholder="${t('adm.search_orders')}"><button class="btn btn-ghost">${ic('search')}</button>
-    <a class="btn btn-ghost" href="/admin/orders/export.csv?status=${status || ''}">${ic('download')} CSV</a></form></div>
-  <section class="panel">${ordersTable(ctx, rows)}${pager(page, pages, (n) => `/admin/orders?status=${status || ''}&q=${encodeURIComponent(q || '')}&page=${n}`)}<p class="muted small">${t('adm.total_n', { n: total })}</p></section>`;
+  const keep = { q, period: f.period, from: f.period === 'custom' ? f.from : '', to: f.period === 'custom' ? f.to : '', method: f.method, pay: f.pay, zone: f.zone };
+  const filtered = !!(f.period || f.method || f.pay || f.zone || q);
+  const body = html`<nav class="tabs mb">${status === 'active' ? html`<a class="on" href="/admin/orders?${qs({ ...keep, status })}">${t('st.active')} <b>${total}</b></a>` : ''}<a class="${!status ? 'on' : ''}" href="/admin/orders?${qs(keep)}">${t('adm.all')} <b>${counts.all || 0}</b></a>${statuses.map((s) => html`<a class="${status === s ? 'on' : ''}" href="/admin/orders?${qs({ ...keep, status: s })}">${t('status.' + s)} <b>${counts[s] || 0}</b></a>`)}</nav>
+  <form class="panel filters" method="get" action="/admin/orders" data-autosubmit><input type="hidden" name="status" value="${status || ''}">
+    <label class="f grow"><span>${t('search.label')}</span><input name="q" value="${q || ''}" placeholder="${t('adm.search_orders')}"></label>
+    ${filterFields(ctx, f, { zones, payStatuses, anyPeriod: true })}
+    <div class="f-actions"><button class="btn">${ic('search')} ${t('st.apply')}</button>${filtered ? html`<a class="btn btn-ghost" href="/admin/orders${status ? '?status=' + status : ''}">${t('st.reset')}</a>` : ''}
+    <a class="btn btn-ghost" href="/admin/orders/export.csv?${qs({ ...keep, status })}">${ic('download')} CSV</a></div></form>
+  <section class="panel">${ordersTable(ctx, rows)}${pager(page, pages, (n) => `/admin/orders?${qs({ ...keep, status, page: n })}`)}<p class="muted small">${t('adm.total_n', { n: total })} · ${t('st.revenue')}: ${ctx.money(sum)}</p></section>`;
   return layout(ctx, { title: t('adm.orders'), body, active: '/admin/orders' });
 }
+
+// ---------- statistics ----------
+function statsChart(ctx, series, byMonth) {
+  const n = series.length, max = Math.max(1, ...series.map((s) => s.v));
+  const w = n > 45 ? 12 : n > 20 ? 18 : 30, gap = n > 45 ? 4 : 7, h = 170, every = Math.ceil(n / 16);
+  const label = (k) => (byMonth ? `${k.slice(5, 7)}/${k.slice(2, 4)}` : `${k.slice(8)}/${k.slice(5, 7)}`);
+  return html`<div dir="ltr"><svg class="chart" viewBox="0 0 ${n * (w + gap)} ${h + 30}" role="img" aria-label="${ctx.t(byMonth ? 'st.chart_month' : 'st.chart_day')}">${series.map((d, i) => {
+    const bh = Math.round((d.v / max) * h);
+    return raw(`<g><title>${label(d.k)}: ${ctx.money(d.v)} · ${ctx.t('adm.n_orders', { n: d.n })}</title><rect x="${i * (w + gap)}" y="${h - bh}" width="${w}" height="${Math.max(bh, 1)}" rx="3" class="bar"/>${i % every === 0 ? `<text x="${i * (w + gap) + w / 2}" y="${h + 16}" text-anchor="middle">${label(d.k)}</text>` : ''}</g>`);
+  })}</svg></div>`;
+}
+function stats(ctx, { d, zones, statuses, payStatuses, counts }) {
+  const { t, L } = ctx;
+  const f = d.f, k = d.kpi;
+  const o = (v, label, cur) => html`<option value="${v}"${sel(String(cur) === String(v))}>${label}</option>`;
+  const pct = (a, b) => (b ? Math.round((a / b) * 100) : 0);
+  const sbar = (v, max) => html`<span class="sbar"><i style="width:${max ? Math.max(2, Math.round((v / max) * 100)) : 0}%"></i></span>`;
+  const change = (now, before) => {
+    if (!d.prev) return '';
+    if (!before) return now ? html`<small class="chg up">${t('st.new')}</small>` : '';
+    const c = Math.round(((now - before) / before) * 100);
+    return html`<small class="chg ${c >= 0 ? 'up' : 'down'}" title="${t('st.vs_prev')}">${c >= 0 ? '▲' : '▼'} ${Math.abs(c)}% <span class="muted">${t('st.vs_prev')}</span></small>`;
+  };
+  const kpi = (key, label, val, sub) => html`<div class="kpi" data-kpi="${key}"><span>${label}</span><strong>${val}</strong>${sub || ''}</div>`;
+  const keepF = { period: f.period, from: f.period === 'custom' ? f.from : '', to: f.period === 'custom' ? f.to : '', method: f.method, pay: f.pay, zone: f.zone };
+  const ordersLink = (extra = {}) => `/admin/orders?${qs({ ...keepF, period: f.period === 'all' ? '' : f.period, status: STATUS_LINK(f.status), ...extra })}`;
+  const empty = html`<p class="muted">${t('adm.no_data')}</p>`;
+  const breakdown = (key, title, rows, label, link) => html`<section class="panel" data-breakdown="${key}"><h2>${title}</h2>${rows.length ? html`<table class="tbl stat"><thead><tr><th></th><th class="num">${t('st.orders')}</th><th class="num">${t('st.revenue')}</th><th class="share">${t('st.share')}</th></tr></thead>
+    <tbody>${rows.map((r) => html`<tr><td>${link ? html`<a href="${link(r)}">${label(r)}</a>` : label(r)}</td><td class="num">${r.n}</td><td class="num">${ctx.money(r.s)}</td><td class="share">${sbar(r.s, k.revenue)}<small>${pct(r.s, k.revenue)}%</small></td></tr>`)}</tbody></table>` : empty}</section>`;
+
+  const body = html`<form class="panel filters" method="get" action="/admin/stats" data-autosubmit>
+    ${filterFields(ctx, f, { zones, payStatuses })}
+    <label class="f"><span>${t('st.status')}</span><select name="status">${o('active', t('st.active'), f.status)}${o('all', t('st.all'), f.status)}${statuses.map((s) => o(s, t('status.' + s), f.status))}</select></label>
+    <div class="f-actions"><button class="btn">${ic('chart')} ${t('st.apply')}</button><a class="btn btn-ghost" href="/admin/stats">${t('st.reset')}</a></div>
+  </form>
+  <div class="bar"><p class="muted range" data-range="${d.from}..${d.to}">${ic('clock')} ${t('st.range', { from: fmtDate(d.from + 'T12:00:00Z', false), to: fmtDate(d.to + 'T12:00:00Z', false), n: d.days })}</p>
+    <div class="actions"><a class="btn btn-ghost" href="${ordersLink()}">${ic('box')} ${t('st.view_orders')}</a><a class="btn btn-ghost" href="/admin/stats/export.csv?${qs({ ...keepF, status: f.status })}">${ic('download')} ${t('st.export')}</a></div></div>
+  <div class="kpis kpis-8">
+    ${kpi('revenue', t('st.revenue'), ctx.money(k.revenue), change(k.revenue, d.prev?.s))}
+    ${kpi('orders', t('st.orders'), k.orders, change(k.orders, d.prev?.n))}
+    ${kpi('aov', t('st.aov'), ctx.money(k.aov))}
+    ${kpi('items', t('st.items'), k.items)}
+    ${kpi('customers', t('st.customers'), k.customers, html`<small>${t('st.repeat', { n: d.repeat })}</small>`)}
+    ${kpi('collected', t('st.collected'), ctx.money(k.collected), html`<small>${t('st.to_collect', { amount: ctx.money(k.toCollect) })}</small>`)}
+    ${kpi('discounts', t('st.discounts'), ctx.money(k.discounts), html`<small>${t('st.delivery_sub', { amount: ctx.money(k.delivery) })}</small>`)}
+    ${kpi('cancelled', t('st.cancel_rate'), k.cancelRate + '%', html`<small>${t('st.cancel_sub', { n: k.cancelled, total: k.allOrders })}</small>`)}
+  </div>
+  <section class="panel"><h2>${t(d.byMonth ? 'st.chart_month' : 'st.chart_day')}</h2>${k.orders ? statsChart(ctx, d.series, d.byMonth) : html`<p class="muted">${t('st.no_orders')}</p>`}</section>
+  <div class="grid2">
+    <section class="panel" data-breakdown="products"><h2>${t('st.top_products')}</h2>${d.topProducts.length ? html`<table class="tbl stat"><thead><tr><th></th><th class="num">${t('st.qty')}</th><th class="num">${t('st.revenue')}</th><th class="share">${t('st.share')}</th></tr></thead>
+      <tbody>${d.topProducts.map((p) => html`<tr><td>${p.id ? html`<a href="/admin/products/${p.id}">${p.label}</a>` : p.label}</td><td class="num">${p.q}</td><td class="num">${ctx.money(p.s)}</td><td class="share">${sbar(p.s, d.itemsTotal)}<small>${pct(p.s, d.itemsTotal)}%</small></td></tr>`)}</tbody></table>` : empty}</section>
+    <section class="panel" data-breakdown="categories"><h2>${t('st.by_cat')}</h2>${d.byCategory.length ? html`<table class="tbl stat"><thead><tr><th></th><th class="num">${t('st.qty')}</th><th class="num">${t('st.revenue')}</th><th class="share">${t('st.share')}</th></tr></thead>
+      <tbody>${d.byCategory.map((c) => html`<tr><td>${c.label || t('st.other')}</td><td class="num">${c.q}</td><td class="num">${ctx.money(c.s)}</td><td class="share">${sbar(c.s, d.itemsTotal)}<small>${pct(c.s, d.itemsTotal)}%</small></td></tr>`)}</tbody></table>` : empty}</section>
+  </div>
+  <div class="grid2">
+    ${breakdown('status', t('st.by_status'), d.byStatus, (r) => html`<span class="st st-${r.key}">${t('status.' + r.key)}</span>`, (r) => ordersLink({ status: r.key }))}
+    ${breakdown('zone', t('st.by_zone'), d.byZone, (r) => r.label, (r) => (r.key ? ordersLink({ zone: r.key }) : ''))}
+  </div>
+  <div class="grid2">
+    ${breakdown('method', t('st.by_method'), d.byMethod, (r) => html`${ic(r.key === 'card' ? 'card' : 'cash')} ${t(r.key === 'card' ? 'pay.card' : 'pay.cod')}`, (r) => ordersLink({ method: r.key }))}
+    ${breakdown('pay', t('st.by_pay'), d.byPay, (r) => html`<span class="pay pay-${r.key}">${t('paystatus.' + r.key)}</span>`, (r) => ordersLink({ pay: r.key }))}
+  </div>
+  <div class="grid2">
+    <section class="panel" data-breakdown="customers"><h2>${t('st.top_customers')}</h2>${d.topCustomers.length ? html`<table class="tbl stat"><thead><tr><th></th><th class="num">${t('st.orders')}</th><th class="num">${t('st.revenue')}</th></tr></thead>
+      <tbody>${d.topCustomers.map((c) => html`<tr><td>${c.user_id ? html`<a href="/admin/customers/${c.user_id}">${c.name}</a>` : html`<a href="/admin/orders?q=${encodeURIComponent(String(c.phone || '').slice(-9))}">${c.name}</a>`}<br><small class="muted" dir="ltr">${c.phone}</small></td><td class="num">${c.n}</td><td class="num">${ctx.money(c.s)}</td></tr>`)}</tbody></table>` : empty}</section>
+    <div>
+      <section class="panel" data-breakdown="weekdays"><h2>${t('st.weekdays')}</h2>${k.orders ? html`<table class="tbl stat"><tbody>${d.weekdays.map((w) => html`<tr><td>${w.label}</td><td class="num">${t('adm.n_orders', { n: w.n })}</td><td class="num">${ctx.money(w.s)}</td><td class="share">${sbar(w.n, Math.max(...d.weekdays.map((x) => x.n)))}</td></tr>`)}</tbody></table>` : empty}</section>
+      <section class="panel" data-breakdown="coupons"><h2>${t('st.coupons')}</h2>${d.coupons.length ? html`<table class="tbl stat"><thead><tr><th></th><th class="num">${t('st.uses')}</th><th class="num">${t('cart.discount')}</th><th class="num">${t('st.revenue')}</th></tr></thead>
+        <tbody>${d.coupons.map((c) => html`<tr><td><code>${c.key}</code></td><td class="num">${c.n}</td><td class="num">${ctx.money(c.d)}</td><td class="num">${ctx.money(c.s)}</td></tr>`)}</tbody></table>` : empty}</section>
+    </div>
+  </div>`;
+  return layout(ctx, { title: t('adm.stats'), body, active: '/admin/stats', counts });
+}
+const STATUS_LINK = (st) => (st === 'all' ? '' : st); // 'active' = all except cancelled (the orders list understands it)
 
 function orderDetail(ctx, { o, items, events, statuses, payStatuses, customer }) {
   const { t, lang } = ctx;
   const wa = waNumber(o.phone);
   const body = html`<div class="bar"><a class="btn btn-ghost" href="/admin/orders">${ic('chev')} ${t('adm.back')}</a>
-    <div class="actions"><a class="btn btn-ghost" href="/admin/orders/${o.id}/invoice" target="_blank">${ic('print')} ${t('adm.invoice')}</a>
+    <div class="actions"><a class="btn btn-ghost" href="/admin/orders/${o.id}/invoice.pdf?lang=ar" target="_blank" data-pdf="ar">${ic('file')} ${t('adm.invoice_pdf')} (عربي)</a>
+    <a class="btn btn-ghost" href="/admin/orders/${o.id}/invoice.pdf?lang=en" target="_blank" data-pdf="en">${ic('file')} ${t('adm.invoice_pdf')} (English)</a>
+    <a class="btn btn-ghost" href="/admin/orders/${o.id}/invoice" target="_blank">${ic('print')} ${t('adm.print')}</a>
+    ${o.email ? html`<form method="post" action="/admin/orders/${o.id}/email-invoice">${csrf(ctx)}<button class="btn btn-ghost" data-email-invoice>${ic('mail')} ${t('adm.email_invoice')}</button></form>` : ''}
     <a class="btn btn-ghost" href="/${o.lang}/order/${encodeURIComponent(o.number)}?t=${o.token}" target="_blank">${ic('eye')} ${t('adm.customer_view')}</a></div></div>
   <div class="grid2 wide-first">
     <div>
@@ -156,6 +255,7 @@ function orderDetail(ctx, { o, items, events, statuses, payStatuses, customer })
         <form method="post" action="/admin/orders/${o.id}/payment" class="stack mt">${csrf(ctx)}
           <label>${t('order.payment')} (${t(o.payment_method === 'card' ? 'pay.card' : 'pay.cod')})<select name="payment_status">${payStatuses.map((s) => html`<option value="${s}"${sel(o.payment_status === s)}>${t('paystatus.' + s)}</option>`)}</select></label>
           ${o.payment_ref ? html`<small class="muted" dir="ltr">Ref: ${o.payment_ref}</small>` : ''}
+          ${o.email && o.payment_status !== 'paid' ? html`<label class="check"><input type="checkbox" name="notify_pay" value="1" checked> ${t('adm.email_receipt')}</label>` : ''}
           <button class="btn btn-ghost">${t('common.save')}</button></form>
       </section>
       <section class="panel"><h2>${t('adm.customer')}</h2>
@@ -188,18 +288,43 @@ function invoice(ctx, { o, items }) {
 // ---------- products ----------
 function products(ctx, { rows, total, page, pages, q, cat, status, catOptions }) {
   const { t, L } = ctx;
+  const listUrl = `/admin/products?q=${encodeURIComponent(q || '')}&cat=${cat || ''}&status=${status || ''}&page=${page}`;
+  const back = html`<input type="hidden" name="back" value="${listUrl}">`;
   const body = html`<div class="bar"><form class="search" method="get">
     <input name="q" value="${q || ''}" placeholder="${t('adm.search_products')}">
     <select name="cat"><option value="">${t('adm.all_categories')}</option>${catOptions.map((c) => html`<option value="${c.id}"${sel(+cat === c.id)}>${c.label}</option>`)}</select>
     <select name="status"><option value="">${t('adm.all')}</option><option value="active"${sel(status === 'active')}>${t('adm.active')}</option><option value="hidden"${sel(status === 'hidden')}>${t('adm.hidden')}</option><option value="low"${sel(status === 'low')}>${t('adm.low_stock')}</option></select>
     <button class="btn btn-ghost">${ic('search')}</button></form>
     <div class="actions"><a class="btn btn-ghost" href="/admin/products/import">${ic('upload')} ${t('adm.import')}</a><a class="btn btn-ghost" href="/admin/products/export.csv">${ic('download')} CSV</a><a class="btn" href="/admin/products/new">${ic('plus')} ${t('adm.new_product')}</a></div></div>
-  <section class="panel"><div class="tbl-wrap"><table class="tbl"><thead><tr><th></th><th>${t('adm.product')}</th><th>${t('adm.price')}</th><th>${t('adm.stock')}</th><th>${t('adm.sold')}</th><th>${t('adm.status')}</th></tr></thead>
-  <tbody>${rows.map((p) => html`<tr><td><img class="thumb" src="${p.images[0] || '/assets/img/placeholder.svg'}" alt=""></td>
-    <td><a href="/admin/products/${p.id}"><b>${L(p, 'name')}</b></a><br><small class="muted">${ctx.lang === 'ar' ? p.name_en : p.name_ar}${p.variants.length ? ` · ${t('adm.n_shades', { n: p.variants.length })}` : ''}</small></td>
-    <td class="nowrap">${p.pi.off ? html`<b>${ctx.money(p.pi.price)}</b> <del class="muted">${ctx.money(p.price)}</del>` : ctx.money(p.price)}</td>
-    <td class="num ${p.stock <= 0 ? 'neg' : p.stock <= +ctx.s.low_stock ? 'warn' : ''}">${p.stock}</td><td class="num">${p.sold}</td>
-    <td>${p.active ? html`<span class="pill on">${t('adm.active')}</span>` : html`<span class="pill">${t('adm.hidden')}</span>`}${p.is_bestseller ? html` <span class="pill">★</span>` : ''}${p.is_new ? html` <span class="pill">${t('badge.new')}</span>` : ''}</td></tr>`)}</tbody></table></div>
+  <p class="tip">${ic('bolt')} ${t('adm.quick_tip')}</p>
+  <form id="bulk" class="bulkbar" method="post" action="/admin/products/bulk" data-bulk data-confirm-delete="${t('adm.confirm_bulk_delete')}">${csrf(ctx)}${back}
+    <label class="check"><input type="checkbox" data-checkall> ${t('adm.select_all')}</label>
+    <select name="action" data-bulk-action required><option value="">${t('adm.bulk_with')}</option>
+      <option value="show">${t('adm.bulk.show')}</option><option value="hide">${t('adm.bulk.hide')}</option>
+      <option value="sale">${t('adm.bulk.sale')}</option><option value="sale_off">${t('adm.bulk.sale_off')}</option>
+      <option value="new_on">${t('adm.bulk.new_on')}</option><option value="new_off">${t('adm.bulk.new_off')}</option>
+      <option value="best_on">${t('adm.bulk.best_on')}</option><option value="best_off">${t('adm.bulk.best_off')}</option>
+      <option value="cat_add">${t('adm.bulk.cat_add')}</option><option value="cat_remove">${t('adm.bulk.cat_remove')}</option>
+      <option value="delete">${t('adm.bulk.delete')}</option></select>
+    <label class="bulk-opt" data-for="sale"><input name="percent" type="number" min="1" max="90" step="1" placeholder="%" class="w-num"> %</label>
+    <select name="cat" class="bulk-opt" data-for="cat_add cat_remove"><option value="">${t('adm.bulk_choose_cat')}</option>${catOptions.map((c) => html`<option value="${c.id}">${c.label}</option>`)}</select>
+    <button class="btn btn-ghost">${t('adm.apply')}</button> <small class="muted" data-bulk-count></small></form>
+  <section class="panel"><div class="tbl-wrap"><table class="tbl plist"><thead><tr><th></th><th></th><th>${t('adm.product')}</th><th>${t('adm.price')} (${ctx.s.currency_symbol})</th><th>${t('adm.sale_price')}</th><th>${t('adm.stock')}</th><th>${t('adm.sold')}</th><th>${t('adm.status')}</th><th></th></tr></thead>
+  <tbody>${rows.map((p) => {
+    const fid = 'qe-' + p.id, shades = p.variants.length;
+    return html`<tr data-row="${p.id}"><td><input type="checkbox" name="ids[]" value="${p.id}" form="bulk" aria-label="${L(p, 'name')}"></td>
+    <td><a href="/admin/products/${p.id}"><img class="thumb" src="${p.images[0] || '/assets/img/placeholder.svg'}" alt=""></a></td>
+    <td><a href="/admin/products/${p.id}"><b>${L(p, 'name')}</b></a><br><small class="muted">${ctx.lang === 'ar' ? p.name_en : p.name_ar}${shades ? ` · ${t('adm.n_shades', { n: shades })}` : ''}</small></td>
+    <td><input class="qe" form="${fid}" name="price" type="number" min="0" step="any" value="${p.price}" required aria-label="${t('adm.price')}"></td>
+    <td><input class="qe" form="${fid}" name="sale_price" type="number" min="0" step="any" value="${p.sale_price ?? ''}" placeholder="—" aria-label="${t('adm.sale_price')}">${p.pi.off ? html`<small class="off">-${p.pi.off}%</small>` : ''}</td>
+    <td>${shades ? html`<a class="num ${p.stock <= 0 ? 'neg' : p.stock <= +ctx.s.low_stock ? 'warn' : ''}" href="/admin/products/${p.id}#shades" title="${t('adm.stock_in_shades')}">${p.stock}</a>`
+      : html`<input class="qe w-num ${p.stock <= 0 ? 'neg' : p.stock <= +ctx.s.low_stock ? 'warn' : ''}" form="${fid}" name="stock" type="number" step="1" value="${p.stock}" aria-label="${t('adm.stock')}">`}</td>
+    <td class="num">${p.sold}</td>
+    <td><form method="post" action="/admin/products/${p.id}/toggle" data-toggle>${csrf(ctx)}${back}<button class="pill-btn ${p.active ? 'on' : ''}" title="${t('adm.toggle_hint')}" data-on="${t('adm.active')}" data-off="${t('adm.hidden')}">${p.active ? t('adm.active') : t('adm.hidden')}</button></form>${p.is_bestseller ? html` <span class="pill">★</span>` : ''}${p.is_new ? html` <span class="pill">${t('badge.new')}</span>` : ''}</td>
+    <td class="nowrap"><form id="${fid}" method="post" action="/admin/products/${p.id}/quick" data-quick>${csrf(ctx)}${back}<button class="btn btn-ghost btn-xs" title="${t('common.save')}">${ic('check')} <span>${t('common.save')}</span></button></form>
+      <a class="btn btn-ghost btn-xs" href="/admin/products/${p.id}" title="${t('adm.edit')}">${ic('edit')}</a></td></tr>`;
+  })}</tbody></table></div>
+  ${rows.length ? '' : html`<div class="empty-box"><p>${t('adm.no_products')}</p><a class="btn" href="/admin/products/new">${ic('plus')} ${t('adm.new_product')}</a></div>`}
   ${pager(page, pages, (n) => `/admin/products?q=${encodeURIComponent(q || '')}&cat=${cat || ''}&status=${status || ''}&page=${n}`)}<p class="muted small">${t('adm.total_n', { n: total })}</p></section>`;
   return layout(ctx, { title: t('adm.products'), body, active: '/admin/products' });
 }
@@ -208,9 +333,10 @@ function productForm(ctx, { p, catTree, error }) {
   const { t } = ctx;
   const isNew = !p.id;
   const v = (k) => (p[k] == null ? '' : p[k]);
-  const tx = (k, label, o = {}) => html`<label class="f ${o.cls || ''}"><span>${label}</span><input name="${k}" value="${v(k)}"${o.dir ? raw(` dir="${o.dir}"`) : ''}${o.req ? raw(' required') : ''}${o.type ? raw(` type="${o.type}" step="any" min="0"`) : ''}${o.ph ? raw(` placeholder="${o.ph}"`) : ''}></label>`;
+  const hint = (k) => (k ? html`<small class="muted">${t(k)}</small>` : '');
+  const tx = (k, label, o = {}) => html`<label class="f ${o.cls || ''}"><span>${label}${o.req ? html` <b class="req">*</b>` : ''}</span><input name="${k}" value="${v(k)}"${o.dir ? raw(` dir="${o.dir}"`) : ''}${o.req === 'html' ? raw(' required') : ''}${o.type ? raw(` type="${o.type}" step="any" min="0"`) : ''}${o.ph ? raw(` placeholder="${o.ph}"`) : ''}${o.data ? raw(` ${o.data}`) : ''}>${hint(o.hint)}</label>`;
   const ta = (k, label, o = {}) => html`<label class="f"><span>${label}</span><textarea name="${k}" rows="${o.rows || 4}"${o.dir ? raw(` dir="${o.dir}"`) : ''}>${v(k)}</textarea></label>`;
-  const flag = (k, label) => html`<label class="check"><input type="checkbox" name="${k}" value="1"${chk(+p[k])}> ${label}</label>`;
+  const flag = (k, label, h) => html`<label class="check"><input type="checkbox" name="${k}" value="1"${chk(+p[k])}> ${label}${h ? html` <small class="muted">— ${t(h)}</small>` : ''}</label>`;
   const catRow = (c, depth) => html`<label class="check" style="padding-inline-start:${depth * 18}px"><input type="checkbox" name="cats[]" value="${c.id}"${chk((p.catIds || []).includes(c.id))}> ${ctx.L(c, 'name')}</label>${c.children.map((k) => catRow(k, depth + 1))}`;
   const variants = p.variants || [];
   const vrow = (x = {}) => html`<tr data-vrow><td><input type="hidden" name="v_id[]" value="${x.id || ''}"><input type="color" name="v_color[]" value="${x.color || '#c2185b'}"></td>
@@ -218,37 +344,46 @@ function productForm(ctx, { p, catTree, error }) {
     <td><input name="v_sku[]" value="${x.sku || ''}" dir="ltr"></td><td><input name="v_stock[]" type="number" value="${x.stock ?? 0}" class="w-num"></td>
     <td><div class="img1" data-img1><input type="hidden" name="v_image[]" value="${x.image || ''}"><img src="${x.image || ''}" alt=""${x.image ? '' : raw(' hidden')}><label class="btn btn-ghost btn-xs">${ic('upload')}<input type="file" accept="image/*" hidden></label><button type="button" class="btn btn-ghost btn-xs" data-clear>×</button></div></td>
     <td><button type="button" class="btn btn-ghost btn-xs" data-vdel aria-label="${t('adm.delete')}">${ic('trash')}</button></td></tr>`;
+  const hasDetails = ['desc_en', 'desc_ar', 'howto_en', 'howto_ar', 'ingredients'].some((k) => v(k));
+  const step = (n, title, sub) => html`<h2><span class="stepno">${n}</span> ${title}${sub ? html` <small class="muted">${sub}</small>` : ''}</h2>`;
   const body = html`${error ? html`<div class="alert alert-err">${error}</div>` : ''}
+  ${isNew ? html`<div class="guide">${ic('sparkle')} <div><b>${t('adm.pguide_title')}</b><ol><li>${t('adm.pguide_1')}</li><li>${t('adm.pguide_2')}</li><li>${t('adm.pguide_3')}</li><li>${t('adm.pguide_4')}</li></ol></div></div>` : ''}
   <form method="post" action="/admin/products/${isNew ? 'new' : p.id}" class="pform" data-pform>${csrf(ctx)}
   <div class="grid2 wide-first"><div>
-    <section class="panel"><h2>${t('adm.basic')}</h2>
-      <div class="row2">${tx('name_en', t('adm.f.name_en'), { req: 1, dir: 'ltr' })}${tx('name_ar', t('adm.f.name_ar'), { req: 1, dir: 'rtl' })}</div>
-      <div class="row2">${tx('short_en', t('adm.f.short_en'), { dir: 'ltr' })}${tx('short_ar', t('adm.f.short_ar'), { dir: 'rtl' })}</div>
-      <div class="row2">${tx('slug', t('adm.f.slug'), { dir: 'ltr', ph: t('adm.auto') })}${tx('sku', 'SKU', { dir: 'ltr' })}</div>
+    <section class="panel">${step(1, t('adm.basic'))}
+      <div class="row2">${tx('name_ar', t('adm.f.name_ar'), { dir: 'rtl' })}${tx('name_en', t('adm.f.name_en'), { dir: 'ltr' })}</div>
+      <p class="muted small">${t('adm.names_hint')}</p>
+      <div class="row2">${tx('short_ar', t('adm.f.short_ar'), { dir: 'rtl' })}${tx('short_en', t('adm.f.short_en'), { dir: 'ltr' })}</div>
     </section>
-    <section class="panel"><h2>${t('adm.images')}</h2><div class="imgs" data-images><input type="hidden" name="images" value="${JSON.stringify(p.images || [])}"><div class="imgs-list"></div>
-      <label class="btn btn-ghost">${ic('upload')} ${t('adm.upload_images')}<input type="file" accept="image/*" multiple hidden></label><p class="muted small">${t('adm.images_hint')}</p></div></section>
-    <section class="panel"><h2>${t('adm.shades')}</h2><p class="muted small">${t('adm.shades_hint')}</p>
+    <section class="panel">${step(2, t('adm.images'))}<div class="imgs" data-images><input type="hidden" name="images" value="${JSON.stringify(p.images || [])}"><div class="imgs-list"></div>
+      <div class="dropzone"><label class="btn btn-ghost">${ic('upload')} ${t('adm.upload_images')}<input type="file" accept="image/*" multiple hidden></label><span class="muted small">${t('adm.drop_hint')}</span></div><p class="muted small">${t('adm.images_hint')}</p></div></section>
+    <section class="panel" id="shades">${step(5, t('adm.shades'), t('adm.optional'))}<p class="muted small">${t('adm.shades_hint')}</p>
       <div class="tbl-wrap"><table class="tbl vtable"><thead><tr><th>${t('adm.color')}</th><th>${t('adm.f.name_en')}</th><th>${t('adm.f.name_ar')}</th><th>SKU</th><th>${t('adm.stock')}</th><th>${t('adm.image')}</th><th></th></tr></thead>
       <tbody data-vbody>${variants.map(vrow)}</tbody></table></div>
       <template data-vtpl>${vrow()}</template><button type="button" class="btn btn-ghost" data-vadd>${ic('plus')} ${t('adm.add_shade')}</button></section>
-    <section class="panel"><h2>${t('adm.content')}</h2>
-      <div class="row2">${ta('desc_en', t('adm.f.desc_en'), { dir: 'ltr' })}${ta('desc_ar', t('adm.f.desc_ar'), { dir: 'rtl' })}</div>
-      <div class="row2">${ta('howto_en', t('adm.f.howto_en'), { dir: 'ltr', rows: 3 })}${ta('howto_ar', t('adm.f.howto_ar'), { dir: 'rtl', rows: 3 })}</div>
+    <details class="panel"${hasDetails ? raw(' open') : ''}><summary>${step(6, t('adm.content'), t('adm.optional'))}</summary>
+      <div class="row2">${ta('desc_ar', t('adm.f.desc_ar'), { dir: 'rtl' })}${ta('desc_en', t('adm.f.desc_en'), { dir: 'ltr' })}</div>
+      <div class="row2">${ta('howto_ar', t('adm.f.howto_ar'), { dir: 'rtl', rows: 3 })}${ta('howto_en', t('adm.f.howto_en'), { dir: 'ltr', rows: 3 })}</div>
       ${ta('ingredients', t('pdp.ingredients'), { dir: 'ltr', rows: 3 })}<p class="muted small">${t('adm.rich_hint')}</p>
-    </section>
-    <section class="panel"><h2>SEO</h2><div class="row2">${tx('meta_title', t('adm.f.meta_title'))}${tx('meta_desc', t('adm.f.meta_desc'))}</div></section>
+    </details>
+    <details class="panel"><summary><h2>${ic('cog')} ${t('adm.advanced')} <small class="muted">${t('adm.optional')}</small></h2></summary>
+      <div class="row2">${tx('slug', t('adm.f.slug'), { dir: 'ltr', ph: t('adm.auto'), hint: 'adm.slug_hint' })}${tx('sort', t('adm.sort'), { type: 'number', hint: 'adm.sort_hint' })}</div>
+      <div class="row2">${tx('meta_title', t('adm.f.meta_title'))}${tx('meta_desc', t('adm.f.meta_desc'))}</div>
+    </details>
   </div><div>
-    <section class="panel"><h2>${t('adm.pricing')}</h2>
-      ${tx('price', t('adm.price') + ` (${ctx.s.currency_symbol})`, { req: 1, type: 'number' })}${tx('sale_price', t('adm.sale_price'), { type: 'number', ph: t('adm.optional') })}
-      ${tx('stock', t('adm.stock'), { type: 'number' })}<p class="muted small">${t('adm.stock_hint')}</p></section>
-    <section class="panel"><h2>${t('adm.visibility')}</h2>
-      ${flag('active', t('adm.active'))}${flag('is_new', t('badge.new'))}${flag('is_bestseller', t('badge.bestseller'))}${flag('is_limited', t('badge.limited'))}${flag('featured', t('adm.featured'))}
-      ${tx('sort', t('adm.sort'), { type: 'number' })}</section>
-    <section class="panel"><h2>${t('adm.categories')}</h2><div class="cats">${catTree.map((c) => catRow(c, 0))}</div>
+    <section class="panel">${step(3, t('adm.pricing'))}
+      ${tx('price', t('adm.price') + ` (${ctx.s.currency_symbol})`, { req: 'html', type: 'number', data: 'data-price' })}
+      ${tx('sale_price', t('adm.sale_price') + ` (${ctx.s.currency_symbol})`, { type: 'number', ph: t('adm.optional'), hint: 'adm.sale_hint', data: 'data-sale' })}<p class="sale-info small" data-sale-info data-tpl="${t('adm.sale_info')}" data-err="${t('adm.err.sale_price')}" aria-live="polite"></p>
+      ${variants.length ? html`<p class="muted small">${t('adm.stock')}: <b>${p.stock}</b> — ${t('adm.stock_in_shades')}</p><input type="hidden" name="stock" value="${v('stock')}">` : tx('stock', t('adm.stock'), { type: 'number', hint: 'adm.stock_hint' })}
+      ${tx('sku', t('adm.f.sku'), { dir: 'ltr', hint: 'adm.sku_hint' })}</section>
+    <section class="panel">${step(4, t('adm.categories'))}<div class="cats">${catTree.map((c) => catRow(c, 0))}</div>
       <label class="f"><span>${t('adm.main_cat')}</span><select name="main_cat"><option value="">${t('adm.auto')}</option>${flatCats(catTree).map((c) => html`<option value="${c.id}"${sel(p.main_cat === c.id)}>${c.label}</option>`)}</select></label></section>
-    <div class="sticky-actions"><button class="btn btn-block">${t('common.save')}</button>
-      ${isNew ? '' : html`<a class="btn btn-ghost btn-block" href="/${ctx.lang}/p/${p.slug}" target="_blank">${ic('eye')} ${t('adm.view_store')}</a>`}</div>
+    <section class="panel"><h2>${t('adm.visibility')}</h2>
+      ${flag('active', t('adm.active'), 'adm.active_hint')}${flag('is_new', t('badge.new'))}${flag('is_bestseller', t('badge.bestseller'))}${flag('is_limited', t('badge.limited'))}${flag('featured', t('adm.featured'), 'adm.featured_hint')}</section>
+    <div class="sticky-actions"><button class="btn btn-block" data-save>${ic('check')} ${t('common.save')}</button>
+      ${isNew ? html`<button class="btn btn-ghost btn-block" name="next" value="new">${ic('plus')} ${t('adm.save_add_another')}</button>` : html`<button class="btn btn-ghost btn-block" name="next" value="list">${t('adm.save_back')}</button>`}
+      ${isNew ? '' : html`<a class="btn btn-ghost btn-block" href="/${ctx.lang}/p/${p.slug}" target="_blank">${ic('eye')} ${t('adm.view_in_store')}</a>`}
+      <a class="btn btn-ghost btn-block" href="/admin/products">${ic('chev')} ${t('adm.back')}</a></div>
   </div></div></form>
   ${isNew ? '' : html`<div class="danger-row"><form method="post" action="/admin/products/${p.id}/duplicate">${csrf(ctx)}<button class="btn btn-ghost">${ic('copy')} ${t('adm.duplicate')}</button></form>
     <form method="post" action="/admin/products/${p.id}/delete" data-confirm="${t('adm.confirm_delete')}">${csrf(ctx)}<button class="btn btn-danger">${ic('trash')} ${t('adm.delete')}</button></form></div>`}`;
@@ -305,28 +440,80 @@ function resForm(ctx, { res, def, row, error }) {
   return layout(ctx, { title: `${t(def.title)} · ${isNew ? t('adm.add') : t('adm.edit')}`, body, active: '/admin/r/' + res });
 }
 
-// ---------- customers / messages / subscribers ----------
-function customers(ctx, { rows, q, total, page, pages }) {
+// ---------- users (admins + customers) / my account / messages / subscribers ----------
+function customers(ctx, { rows, q, role, total, page, pages, counts }) {
   const { t } = ctx;
-  const body = html`<div class="bar"><form class="search" method="get"><input name="q" value="${q || ''}" placeholder="${t('adm.search_customers')}"><button class="btn btn-ghost">${ic('search')}</button></form>
-  <div class="actions"><a class="btn btn-ghost" href="/admin/customers/export.csv">${ic('download')} CSV</a></div></div>
-  <section class="panel"><div class="tbl-wrap"><table class="tbl"><thead><tr><th>${t('co.name')}</th><th>${t('common.email')}</th><th>${t('co.phone')}</th><th class="num">${t('adm.orders')}</th><th class="num">${t('adm.spent')}</th><th>${t('adm.joined')}</th></tr></thead>
-  <tbody>${rows.map((u) => html`<tr><td><a href="/admin/customers/${u.id}">${u.name}</a>${u.role === 'admin' ? html` <span class="pill on">admin</span>` : ''}</td><td dir="ltr">${u.email}</td><td dir="ltr">${u.phone || ''}</td><td class="num">${u.orders}</td><td class="num">${ctx.money(u.spent)}</td><td dir="ltr">${fmtDate(u.created_at, false)}</td></tr>`)}</tbody></table></div>
-  ${pager(page, pages, (n) => `/admin/customers?q=${encodeURIComponent(q || '')}&page=${n}`)}<p class="muted small">${t('adm.total_n', { n: total })}</p></section>`;
-  return layout(ctx, { title: t('adm.customers'), body, active: '/admin/customers' });
+  const tab = (r, label) => html`<a class="${(role || '') === r ? 'on' : ''}" href="/admin/customers${r ? '?role=' + r : ''}">${t(label)} <b>${counts[r || 'all'] || 0}</b></a>`;
+  const body = html`<div class="bar"><nav class="tabs">${tab('', 'adm.all')}${tab('admin', 'adm.admins')}${tab('customer', 'adm.customers')}</nav>
+    <div class="actions"><form class="search" method="get"><input type="hidden" name="role" value="${role || ''}"><input name="q" value="${q || ''}" placeholder="${t('adm.search_customers')}"><button class="btn btn-ghost">${ic('search')}</button></form>
+    <a class="btn btn-ghost" href="/admin/customers/export.csv">${ic('download')} CSV</a><a class="btn" href="/admin/customers/new">${ic('plus')} ${t('adm.add_user')}</a></div></div>
+  <section class="panel"><div class="tbl-wrap"><table class="tbl"><thead><tr><th>${t('co.name')}</th><th>${t('adm.role')}</th><th>${t('common.email')}</th><th>${t('co.phone')}</th><th class="num">${t('adm.orders')}</th><th class="num">${t('adm.spent')}</th><th>${t('adm.joined')}</th><th></th></tr></thead>
+  <tbody>${rows.map((u) => html`<tr><td><a href="/admin/customers/${u.id}"><b>${u.name}</b></a>${u.id === ctx.user.id ? html` <span class="pill">${t('adm.you')}</span>` : ''}</td>
+    <td>${u.role === 'admin' ? html`<span class="pill on">${t('adm.role_admin_short')}</span>` : html`<span class="pill">${t('adm.role_customer')}</span>`}</td>
+    <td dir="ltr">${u.email}</td><td dir="ltr">${u.phone || ''}</td><td class="num">${u.orders}</td><td class="num">${ctx.money(u.spent)}</td><td dir="ltr">${fmtDate(u.created_at, false)}</td>
+    <td class="nowrap"><a class="btn btn-ghost btn-xs" href="/admin/customers/${u.id}">${ic('edit')} ${t('adm.edit')}</a></td></tr>`)}</tbody></table></div>
+  ${rows.length ? '' : html`<p class="muted">${t('adm.no_data')}</p>`}
+  ${pager(page, pages, (n) => `/admin/customers?role=${role || ''}&q=${encodeURIComponent(q || '')}&page=${n}`)}<p class="muted small">${t('adm.total_n', { n: total })}</p></section>`;
+  return layout(ctx, { title: t('adm.users'), body, active: '/admin/customers' });
 }
 
-function customer(ctx, { u, orders }) {
+// Shared user form (new user, edit user)
+function userFields(ctx, u = {}, { isNew, self } = {}) {
+  const { t } = ctx;
+  return html`<div class="fgrid">
+    <label class="f"><span>${t('co.name')} *</span><input name="name" required maxlength="80" value="${u.name || ''}"></label>
+    <label class="f"><span>${t('adm.role')} *</span><select name="role"${self ? raw(' disabled') : ''}><option value="customer"${sel(u.role !== 'admin')}>${t('adm.role_customer')}</option><option value="admin"${sel(u.role === 'admin')}>${t('adm.role_admin')}</option></select>
+      ${self ? html`<small class="muted">${t('adm.err.self_role')}</small>` : html`<small class="muted">${t('adm.role_hint')}</small>`}</label>
+    <label class="f"><span>${t('common.email')} *</span><input name="email" type="email" required maxlength="120" dir="ltr" value="${u.email || ''}" autocomplete="off"></label>
+    <label class="f"><span>${t('co.phone')}</span><input name="phone" type="tel" maxlength="20" dir="ltr" value="${u.phone || ''}"></label>
+    <label class="f"><span>${isNew ? t('acc.password') + ' *' : t('adm.new_password_optional')}</span><input name="password" type="text" minlength="8" maxlength="200" autocomplete="new-password"${isNew ? raw(' required') : ''} placeholder="${t('acc.password_hint')}"></label>
+    <label class="f inline"><span>${t('acc.newsletter')}</span><input type="checkbox" name="newsletter" value="1"${chk(+u.newsletter)}></label>
+  </div>`;
+}
+
+function userNew(ctx, { u = {}, error } = {}) {
+  const { t } = ctx;
+  const body = html`<div class="bar"><a class="btn btn-ghost" href="/admin/customers">${ic('chev')} ${t('adm.back')}</a></div>
+  ${error ? html`<div class="alert alert-err">${error}</div>` : ''}
+  <form method="post" action="/admin/customers/new" class="panel rform">${csrf(ctx)}<h2>${t('adm.add_user')}</h2>${userFields(ctx, u, { isNew: true })}
+    <div class="form-actions"><button class="btn">${t('common.save')}</button><a class="btn btn-ghost" href="/admin/customers">${t('adm.cancel')}</a></div></form>`;
+  return layout(ctx, { title: t('adm.add_user'), body, active: '/admin/customers' });
+}
+
+function customer(ctx, { u, orders, error }) {
   const { t } = ctx;
   const self = ctx.user.id === u.id;
-  const body = html`<div class="bar"><a class="btn btn-ghost" href="/admin/customers">${ic('chev')} ${t('adm.back')}</a></div>
-  <div class="grid2 wide-first"><section class="panel"><h2>${t('adm.orders')}</h2>${ordersTable(ctx, orders)}</section>
-  <div><section class="panel"><h2>${u.name}</h2><p dir="ltr">${u.email}<br>${u.phone || ''}</p><p>${u.address || ''} ${u.city || ''}</p><p class="muted small">${t('adm.joined')}: <span dir="ltr">${fmtDate(u.created_at)}</span></p>
-    ${u.phone ? html`<p><a href="https://wa.me/${waNumber(u.phone)}" target="_blank" rel="noopener">${ic('whatsapp')} WhatsApp</a></p>` : ''}</section>
-  <section class="panel"><h2>${t('adm.role')}</h2><form method="post" action="/admin/customers/${u.id}/role" class="stack">${csrf(ctx)}<select name="role"${self ? raw(' disabled') : ''}><option value="customer"${sel(u.role === 'customer')}>${t('adm.role_customer')}</option><option value="admin"${sel(u.role === 'admin')}>${t('adm.role_admin')}</option></select>${self ? '' : html`<button class="btn btn-ghost">${t('common.save')}</button>`}</form></section>
-  <section class="panel"><h2>${t('acc.new_password')}</h2><form method="post" action="/admin/customers/${u.id}/password" class="stack">${csrf(ctx)}<input name="password" type="text" minlength="8" required autocomplete="off" placeholder="${t('acc.password_hint')}"><button class="btn btn-ghost">${t('common.save')}</button></form></section>
-  ${self ? '' : html`<form method="post" action="/admin/customers/${u.id}/delete" data-confirm="${t('adm.confirm_delete')}" class="danger-row">${csrf(ctx)}<button class="btn btn-danger">${ic('trash')} ${t('adm.delete')}</button></form>`}</div></div>`;
+  const body = html`<div class="bar"><a class="btn btn-ghost" href="/admin/customers">${ic('chev')} ${t('adm.back')}</a>
+    ${u.phone ? html`<a class="btn btn-ghost" href="https://wa.me/${waNumber(u.phone)}" target="_blank" rel="noopener">${ic('whatsapp')} WhatsApp</a>` : ''}</div>
+  ${error ? html`<div class="alert alert-err">${error}</div>` : ''}
+  <div class="grid2 wide-first">
+    <div><form method="post" action="/admin/customers/${u.id}/save" class="panel rform">${csrf(ctx)}<h2>${u.name} ${u.role === 'admin' ? html`<span class="pill on">${t('adm.role_admin_short')}</span>` : ''}</h2>
+      ${userFields(ctx, u, { self })}
+      <p class="muted small">${t('adm.joined')}: <span dir="ltr">${fmtDate(u.created_at)}</span>${u.address ? html` · ${u.address} ${u.city || ''}` : ''}</p>
+      <div class="form-actions"><button class="btn">${t('common.save')}</button></div></form>
+    <section class="panel"><h2>${t('adm.orders')}</h2>${ordersTable(ctx, orders)}</section></div>
+    <div>${self ? html`<section class="panel"><p>${t('adm.self_note')}</p><a class="btn btn-ghost" href="/admin/account">${t('adm.my_account')}</a></section>`
+    : html`<section class="panel"><h2>${t('adm.delete_user')}</h2><p class="muted small">${t('adm.delete_user_hint')}</p>
+      <form method="post" action="/admin/customers/${u.id}/delete" data-confirm="${t('adm.confirm_delete')}">${csrf(ctx)}<button class="btn btn-danger">${ic('trash')} ${t('adm.delete')}</button></form></section>`}</div>
+  </div>`;
   return layout(ctx, { title: u.name, body, active: '/admin/customers' });
+}
+
+function account(ctx, { error } = {}) {
+  const { t } = ctx;
+  const u = ctx.user;
+  const body = html`${error ? html`<div class="alert alert-err">${error}</div>` : ''}
+  <div class="grid2">
+    <form method="post" action="/admin/account" class="panel rform">${csrf(ctx)}<h2>${t('adm.my_details')}</h2>
+      <label class="f"><span>${t('co.name')}</span><input name="name" required maxlength="80" value="${u.name}"></label>
+      <label class="f"><span>${t('adm.login_email')}</span><input name="email" type="email" required maxlength="120" dir="ltr" value="${u.email}" autocomplete="username"></label>
+      <label class="f"><span>${t('adm.new_password_optional')}</span><input name="password" type="password" minlength="8" maxlength="200" autocomplete="new-password" placeholder="${t('acc.password_hint')}"></label>
+      <label class="f"><span>${t('adm.confirm_password')}</span><input name="password2" type="password" maxlength="200" autocomplete="new-password"></label>
+      <label class="f"><span>${t('acc.current_password')} *</span><input name="current" type="password" required autocomplete="current-password"><small class="muted">${t('adm.current_pw_hint')}</small></label>
+      <div class="form-actions"><button class="btn">${t('common.save')}</button></div></form>
+    <section class="panel"><h2>${t('adm.account_help_title')}</h2><p>${t('adm.account_help')}</p><p class="muted small">${t('adm.account_cli')}</p><pre class="code" dir="ltr">npm run reset-admin -- you@yourdomain.ps "new-long-password"</pre></section>
+  </div>`;
+  return layout(ctx, { title: t('adm.my_account'), body, active: '/admin/account' });
 }
 
 function messages(ctx, rows) {
@@ -354,11 +541,11 @@ function settings(ctx, { s, smtpEnv }) {
   const yes = (k, label) => html`<label class="f inline"><span>${t(label)}</span><input type="hidden" name="${k}" value="0"><input type="checkbox" name="${k}" value="1"${chk(v(k) === '1')}></label>`;
   const sec = (id, title, inner) => html`<section class="panel" id="${id}"><h2>${t(title)}</h2><div class="fgrid">${inner}</div></section>`;
   const color = (k, label) => html`<label class="f"><span>${t(label)}</span><span class="color-f"><input type="color" name="${k}" value="${v(k) || '#000000'}"><input type="text" value="${v(k)}" data-color-text dir="ltr" maxlength="7"></span></label>`;
-  const body = html`<nav class="tabs sticky">${[['general', 'adm.s.general'], ['theme', 'adm.s.theme'], ['commerce', 'adm.s.commerce'], ['payments', 'adm.s.payments'], ['marketing', 'adm.s.marketing'], ['notify', 'adm.s.notify'], ['seo', 'adm.s.seo'], ['backup', 'adm.s.backup']].map(([id, k]) => html`<a href="#${id}">${t(k)}</a>`)}</nav>
+  const body = html`<nav class="tabs sticky">${[['general', 'adm.s.general'], ['theme', 'adm.s.theme'], ['commerce', 'adm.s.commerce'], ['payments', 'adm.s.payments'], ['invoices', 'adm.s.invoices'], ['marketing', 'adm.s.marketing'], ['notify', 'adm.s.notify'], ['seo', 'adm.s.seo'], ['backup', 'adm.s.backup']].map(([id, k]) => html`<a href="#${id}">${t(k)}</a>`)}</nav>
   <form method="post" action="/admin/settings">${csrf(ctx)}
   ${sec('general', 'adm.s.general', html`${tx('store_name_en', 'adm.f.store_name_en', { dir: 'ltr' })}${tx('store_name_ar', 'adm.f.store_name_ar', { dir: 'rtl' })}
     ${tx('tagline_en', 'adm.f.tagline_en', { dir: 'ltr' })}${tx('tagline_ar', 'adm.f.tagline_ar', { dir: 'rtl' })}
-    <label class="f"><span>${t('adm.f.logo')}</span><div class="img1 lg" data-img1><input type="hidden" name="logo" value="${v('logo')}"><img src="${v('logo')}" alt=""${v('logo') ? '' : raw(' hidden')}><label class="btn btn-ghost btn-xs">${ic('upload')} ${t('adm.upload')}<input type="file" accept="image/*" hidden></label><button type="button" class="btn btn-ghost btn-xs" data-clear>×</button></div><small class="muted">${t('adm.f.logo_hint')}</small></label>
+    <label class="f"><span>${t('adm.f.logo')}</span><div class="img1 lg" data-img1 data-logo><input type="hidden" name="logo" value="${v('logo')}"><img src="${v('logo')}" alt=""${v('logo') ? '' : raw(' hidden')}><label class="btn btn-ghost btn-xs">${ic('upload')} ${t('adm.upload')}<input type="file" accept="image/*" hidden></label><button type="button" class="btn btn-ghost btn-xs" data-clear>×</button></div><small class="muted">${t('adm.f.logo_hint')}</small></label>
     ${tx('email', 'common.email', { dir: 'ltr', type: 'email' })}${tx('phone', 'co.phone', { dir: 'ltr' })}${tx('whatsapp', 'adm.f.whatsapp', { dir: 'ltr', hint: 'adm.f.whatsapp_hint' })}
     ${tx('address_en', 'adm.f.address_en', { dir: 'ltr' })}${tx('address_ar', 'adm.f.address_ar', { dir: 'rtl' })}${tx('hours_en', 'adm.f.hours_en', { dir: 'ltr' })}${tx('hours_ar', 'adm.f.hours_ar', { dir: 'rtl' })}
     ${tx('instagram', 'Instagram URL', { dir: 'ltr' })}${tx('facebook', 'Facebook URL', { dir: 'ltr' })}${tx('tiktok', 'TikTok URL', { dir: 'ltr' })}`)}
@@ -372,6 +559,11 @@ function settings(ctx, { s, smtpEnv }) {
     ${tx('paytabs_domain', 'adm.f.pt_domain', { dir: 'ltr', hint: 'adm.f.pt_domain_hint' })}${tx('paytabs_currency', 'adm.f.pt_currency', { dir: 'ltr', hint: 'adm.f.pt_currency_hint' })}
     ${tx('paytabs_rate', 'adm.f.pt_rate', { type: 'number', hint: 'adm.f.pt_rate_hint' })}${tx('card_timeout_hours', 'adm.f.card_timeout', { type: 'number' })}
     <p class="muted small wide">${t('adm.f.pt_urls')} <code dir="ltr">/pay/paytabs/callback</code> · <code dir="ltr">/pay/paytabs/return</code></p>`)}
+  ${sec('invoices', 'adm.s.invoices', html`<p class="muted small wide">${t('adm.f.invoice_hint')}</p>
+    ${tx('invoice_title_en', 'adm.f.invoice_title_en', { dir: 'ltr' })}${tx('invoice_title_ar', 'adm.f.invoice_title_ar', { dir: 'rtl' })}
+    ${tx('company_name', 'adm.f.company_name')}${tx('tax_id', 'adm.f.tax_id', { dir: 'ltr' })}
+    ${tx('vat_rate', 'adm.f.vat_rate', { type: 'number', hint: 'adm.f.vat_hint' })}${yes('invoice_email_enabled', 'adm.f.invoice_email')}
+    ${ta('invoice_note_en', 'adm.f.invoice_note_en', { dir: 'ltr', hint: 'adm.f.invoice_note_hint' })}${ta('invoice_note_ar', 'adm.f.invoice_note_ar', { dir: 'rtl' })}`)}
   ${sec('marketing', 'adm.s.marketing', html`${ta('announcements_en', 'adm.f.announcements_en', { dir: 'ltr', hint: 'adm.f.one_per_line' })}${ta('announcements_ar', 'adm.f.announcements_ar', { dir: 'rtl', hint: 'adm.f.one_per_line' })}
     ${tx('announcement_link', 'adm.f.link', { dir: 'ltr', ph: '/sale' })}<span></span>
     ${yes('promo_enabled', 'adm.f.promo')}<label class="f"><span>${t('adm.f.promo_ends')}</span><input type="datetime-local" name="promo_ends" value="${utcToZonedInput(v('promo_ends'))}"></label>
@@ -399,4 +591,4 @@ function pager(page, pages, href) {
   return html`<nav class="pager">${nums.map((n) => (n === '…' ? html`<span>…</span>` : n === page ? html`<b>${n}</b>` : html`<a href="${href(n)}">${n}</a>`))}</nav>`;
 }
 
-module.exports = { layout, login, dashboard, orders, orderDetail, invoice, products, productForm, importPage, resList, resForm, customers, customer, messages, subscribers, settings, flatCats, json };
+module.exports = { stats, layout, login, dashboard, orders, orderDetail, invoice, products, productForm, importPage, resList, resForm, customers, customer, userNew, account, messages, subscribers, settings, flatCats, json };

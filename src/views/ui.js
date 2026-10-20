@@ -41,16 +41,14 @@ const ICONS = {
   logout: '<path d="M15 4h4v16h-4M10 16l4-4-4-4M14 12H4"/>',
   box: '<path d="M3 7l9-4 9 4v10l-9 4-9-4z"/><path d="M3 7l9 4 9-4M12 11v10"/>',
   globe: '<circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3c3 3 3 15 0 18M12 3c-3 3-3 15 0 18"/>',
+  invoice: '<path d="M6 3h8l4 4v14H6z"/><path d="M14 3v4h4M9 12h6M9 16h6"/>',
 };
 const sprite = raw(`<svg width="0" height="0" class="sprite" aria-hidden="true" focusable="false">${Object.entries(ICONS).map(([k, d]) => `<symbol id="i-${k}" viewBox="0 0 24 24">${d}</symbol>`).join('')}</svg>`);
 const icon = (name, cls = '') => raw(`<svg class="ic ${cls}" aria-hidden="true" focusable="false"><use href="#i-${name}"/></svg>`);
 
 const PLACEHOLDER = '/assets/img/placeholder.svg';
-// Text logo: "Kiko Palestine" → big "KIKO" with a small "PALESTINE" line underneath
-const wordmark = (name, cls = '') => {
-  const [main, ...rest] = String(name || '').trim().split(/\s+/);
-  return html`<span class="wordmark ${cls}"><span class="wm-main">${main}</span>${rest.length ? html`<span class="wm-sub">${rest.join(' ')}</span>` : ''}</span>`;
-};
+// Plain text logo (the store name on one line). Upload an image logo in Admin → Settings to replace it.
+const wordmark = (name, cls = '') => html`<span class="wordmark ${cls}">${String(name || '').trim()}</span>`;
 const abs = (ctx, u) => (/^https?:/.test(u) ? u : baseUrl(ctx) + u);
 
 // ---------- components ----------
@@ -182,8 +180,10 @@ function header(ctx) {
 }
 
 function mobileMenu(ctx) {
-  const { t, L, u, s } = ctx;
+  const { t, L, u, s, lang } = ctx;
   const nav = navModel(ctx);
+  const other = lang === 'ar' ? 'en' : 'ar';
+  const switchHref = `/${other}${ctx.path.replace(/^\/(ar|en)(?=\/|$)/, '')}${ctx.url.search}`;
   const sub = (c) => {
     const kids = c.children.filter(nav.visible);
     if (!kids.length) return html`<a class="m-link" href="${u('/c/' + c.slug)}">${L(c, 'name')}</a>`;
@@ -194,6 +194,7 @@ function mobileMenu(ctx) {
     <div class="drawer-head">${wordmark(L(s, 'store_name'), 'sm')}<button type="button" class="icon-btn" data-close aria-label="${t('common.close')}">${icon('close')}</button></div>
     <nav class="m-nav">${nav.items.map((it) => sub(it.c))}${nav.extra.map((x) => html`<a class="m-link${x.hot ? ' hot' : ''}" href="${x.href}">${x.name}</a>`)}</nav>
     <div class="m-foot">
+      <a href="${switchHref}" hreflang="${other}" lang="${other}">${icon('globe')} ${other === 'ar' ? 'العربية' : 'English'}</a>
       <a href="${u(ctx.user ? '/account' : '/account/login')}">${icon('user')} ${ctx.user ? t('nav.account') : t('acc.login')}</a>
       <a href="${u('/wishlist')}">${icon('heart')} ${t('nav.wishlist')}</a>
       <a href="${u('/track')}">${icon('box')} ${t('nav.track')}</a>

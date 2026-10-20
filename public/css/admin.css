@@ -99,6 +99,59 @@ input[type='color'] { padding: 2px; width: 46px; height: 36px; }
 code { background: #f1eff3; padding: 1px 6px; border-radius: 5px; font-size: 12px; }
 pre.code { background: #f1eff3; padding: 10px; border-radius: 8px; overflow-x: auto; font-size: 12px; white-space: pre-wrap; word-break: break-all; }
 
+/* filters (orders + statistics) */
+.filters { display: flex; flex-wrap: wrap; gap: 0 12px; align-items: flex-end; padding-bottom: 6px; }
+.filters .f { min-width: 150px; flex: 1 1 150px; }
+.filters .f.grow { flex: 2 1 220px; }
+.f-actions { display: flex; gap: 8px; margin-bottom: 12px; flex-wrap: wrap; }
+.mb { margin-bottom: 14px; }
+.range { margin: 0; display: inline-flex; gap: 6px; align-items: center; }
+.kpis-8 { grid-template-columns: repeat(4, 1fr); }
+.chg { font-weight: 600; } .chg.up { color: var(--ok); } .chg.down { color: var(--bad); } .chg .muted { font-weight: 400; }
+.tbl.stat td, .tbl.stat th { padding: 8px 6px; }
+.tbl.stat .share { width: 34%; white-space: nowrap; }
+.tbl.stat .share small { color: var(--muted); margin-inline-start: 6px; }
+.sbar { display: inline-block; vertical-align: middle; width: calc(100% - 44px); height: 8px; background: #eee; border-radius: 99px; overflow: hidden; }
+.sbar i { display: block; height: 100%; background: var(--acc); border-radius: 99px; }
+
+/* products: quick edit, bulk actions, guided form */
+.tip { background: #fff; border: 1px dashed var(--line); border-radius: 10px; padding: 8px 12px; color: var(--muted); font-size: 13px; display: flex; gap: 8px; align-items: center; margin: 0 0 12px; }
+.bulkbar { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-bottom: 12px; }
+.bulkbar select { width: auto; max-width: 260px; }
+.bulkbar .check { margin-inline-end: 6px; }
+.bulk-opt { display: inline-flex; gap: 4px; align-items: center; }
+.js .bulk-opt { display: none; } .js .bulk-opt.on { display: inline-flex; }
+.plist td { padding: 6px 6px; }
+.plist .qe { width: 92px; padding: 6px 8px; }
+.plist .qe.w-num { width: 74px; }
+.plist .qe.saved { outline: 2px solid var(--ok); }
+.plist .qe.bad { outline: 2px solid var(--bad); }
+.plist tr.dirty .btn-xs { border-color: var(--ink); background: var(--ink); color: #fff; }
+.plist .btn-xs span { display: none; }
+.plist tr.dirty .btn-xs span { display: inline; }
+.plist form { display: inline; margin: 0; }
+.plist .off { display: block; color: var(--bad); font-weight: 600; font-size: 11px; }
+.pill-btn { border: 1px solid var(--line); background: #efedf2; color: var(--muted); border-radius: 99px; padding: 2px 10px; font-size: 11px; font-weight: 600; cursor: pointer; }
+.pill-btn.on { background: #e2f5ea; color: var(--ok); border-color: #c4e8d3; }
+.pill-btn:hover { border-color: var(--ink); }
+.empty-box { text-align: center; padding: 30px 10px; display: grid; gap: 10px; justify-items: center; }
+.guide { display: flex; gap: 12px; align-items: flex-start; background: #fff; border: 1px solid var(--line); border-inline-start: 4px solid var(--ink); border-radius: var(--r); padding: 12px 16px; margin-bottom: 16px; }
+.guide ol { margin: 6px 0 0; padding-inline-start: 20px; display: grid; gap: 2px; }
+.stepno { display: inline-grid; place-items: center; width: 24px; height: 24px; border-radius: 50%; background: var(--ink); color: #fff; font-size: 12px; flex: none; }
+.pform .panel h2 { justify-content: flex-start; }
+.panel h2 small { font-weight: 400; }
+details.panel > summary { list-style: none; cursor: pointer; }
+details.panel > summary::-webkit-details-marker { display: none; }
+details.panel > summary h2 { margin: 0; }
+details.panel > summary h2::after { content: '+'; margin-inline-start: auto; font-weight: 400; font-size: 18px; color: var(--muted); }
+details.panel[open] > summary h2::after { content: '−'; }
+details.panel[open] > summary { margin-bottom: 12px; }
+.dropzone { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; border: 2px dashed var(--line); border-radius: 12px; padding: 14px; }
+.imgs.drag .dropzone { border-color: var(--ink); background: #fafafa; }
+.req { color: var(--bad); }
+.sale-info { margin: -6px 0 10px; color: var(--ok); font-weight: 600; min-height: 1em; }
+.sale-info.bad { color: var(--bad); }
+
 /* forms */
 .stack { display: grid; gap: 10px; }
 .f { display: grid; gap: 5px; margin-bottom: 12px; }

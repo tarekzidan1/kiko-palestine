@@ -24,7 +24,7 @@ const save = (name, svg) => { fs.writeFileSync(path.join(DIR, name), svg); retur
 // ---------- settings ----------
 saveSettings({
   store_name_en: 'Kiko Palestine', store_name_ar: 'كيكو فلسطين', tagline_en: 'Makeup, skincare & fragrance — delivered across Palestine', tagline_ar: 'مكياج وعناية وعطور — توصيل لكل فلسطين',
-  email: 'hello@kiko.ps', phone: '+970 59 000 0000', whatsapp: '970590000000',
+  email: 'info@yourdomain.ps', phone: '+970 59 000 0000', whatsapp: '970590000000',
   address_en: 'Al-Irsal Street, Ramallah, Palestine', address_ar: 'شارع الإرسال، رام الله، فلسطين',
   hours_en: 'Sat–Thu, 9:00–19:00', hours_ar: 'السبت–الخميس، 9:00–19:00',
   instagram: 'https://instagram.com/', facebook: 'https://facebook.com/', tiktok: '',
@@ -34,7 +34,7 @@ saveSettings({
   announcement_link: '/best-sellers',
   promo_enabled: '1', promo_text_en: 'Last days! Up to 30% off selected favourites', promo_text_ar: 'الأيام الأخيرة! خصم حتى 30% على منتجات مختارة',
   promo_link: '/sale', promo_ends: new Date(Date.now() + 3 * 864e5).toISOString(),
-  popup_enabled: '1', popup_title_en: 'Join the Kiko Beauty Club', popup_title_ar: 'انضم إلى نادي كيكو للجمال',
+  popup_enabled: '1', popup_title_en: 'Join our Beauty Club', popup_title_ar: 'انضم إلى نادي الجمال',
   popup_text_en: 'Subscribe for launches and tips — and get 10% off your first order.', popup_text_ar: 'اشترك لتصلك أحدث المنتجات والنصائح — واحصل على خصم 10% على طلبك الأول.',
   popup_coupon: 'WELCOME10', cod_enabled: '1', card_enabled: '0', card_provider: 'paytabs',
   meta_title_en: 'Kiko Palestine — Makeup, Skincare & Fragrance', meta_title_ar: 'كيكو فلسطين — مكياج وعناية بالبشرة وعطور',

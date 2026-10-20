@@ -3,6 +3,7 @@
 //   npm run reset-admin -- you@yourstore.ps "new long password"
 const { one, run } = require('../src/db');
 const { hashPassword } = require('../src/auth');
+const cfg = require('../src/config');
 
 (async () => {
   const [email, password] = process.argv.slice(2);
@@ -12,8 +13,9 @@ const { hashPassword } = require('../src/auth');
   }
   const hash = await hashPassword(password);
   const u = one('SELECT id FROM users WHERE email = ?', email.toLowerCase());
-  if (u) run("UPDATE users SET password = ?, role = 'admin' WHERE id = ?", hash, u.id);
-  else run("INSERT INTO users (name, email, password, role) VALUES ('Admin', ?, ?, 'admin')", email.toLowerCase(), hash);
+  const starter = password === cfg.STARTER_PASSWORD ? 1 : 0; // the admin panel keeps reminding you to change a starter password
+  if (u) run("UPDATE users SET password = ?, role = 'admin', must_change = ? WHERE id = ?", hash, starter, u.id);
+  else run("INSERT INTO users (name, email, password, role, must_change) VALUES ('Admin', ?, ?, 'admin', ?)", email.toLowerCase(), hash, starter);
   run('DELETE FROM sessions WHERE user_id = (SELECT id FROM users WHERE email = ?)', email.toLowerCase());
   console.log(`✔ Admin ${email} can now sign in at /admin with the new password.`);
 })();

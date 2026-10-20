@@ -27,7 +27,7 @@ const safeEqual = (a, b) => {
   return x.length === y.length && crypto.timingSafeEqual(x, y);
 };
 
-const USER_COLS = 'id, name, email, phone, role, lang, zone_id, city, address, newsletter, created_at';
+const USER_COLS = 'id, name, email, phone, role, lang, zone_id, city, address, newsletter, must_change, created_at';
 
 function loadSession(ctx) {
   ctx.session = null; ctx.user = null;
@@ -111,17 +111,18 @@ const requireAdmin = (ctx) => {
 
 const cleanupSessions = () => run('DELETE FROM sessions WHERE expires < ?', Date.now());
 
-// First run: create the admin from .env (or a random password, printed once to the console).
+// First run: create the first admin (ADMIN_EMAIL / ADMIN_PASSWORD, default tarek@admin.com / tarek123).
 async function ensureAdmin() {
   if (one("SELECT 1 FROM users WHERE role = 'admin'")) return null;
   const cfg = require('./config');
   const pw = cfg.ADMIN_PASSWORD || token(9);
   const email = cfg.ADMIN_EMAIL.toLowerCase();
   const hash = await hashPassword(pw);
+  const mustChange = pw === cfg.STARTER_PASSWORD ? 1 : 0;
   const ex = one('SELECT id FROM users WHERE email = ?', email);
-  if (ex) run("UPDATE users SET role = 'admin', password = ? WHERE id = ?", hash, ex.id);
-  else run("INSERT INTO users (name, email, password, role) VALUES ('Admin', ?, ?, 'admin')", email, hash);
-  console.log(`\n  ➜ Admin account: ${email}  /  ${cfg.ADMIN_PASSWORD ? '(password from .env)' : pw}\n    Sign in at /admin — change the password afterwards.\n`);
+  if (ex) run("UPDATE users SET role = 'admin', password = ?, must_change = ? WHERE id = ?", hash, mustChange, ex.id);
+  else run("INSERT INTO users (name, email, password, role, must_change) VALUES ('Tarek', ?, ?, 'admin', ?)", email, hash, mustChange);
+  console.log(`\n  ➜ Admin account: ${email}  /  ${process.env.ADMIN_PASSWORD ? '(password from .env)' : pw}\n    Sign in at /admin and change it in "My account".\n`);
   return { email, password: pw };
 }
 

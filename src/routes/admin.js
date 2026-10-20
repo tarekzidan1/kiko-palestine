@@ -11,16 +11,20 @@ const { hashPassword, verifyPassword, login, logout, requireAdmin } = require('.
 const { cats, invalidate, hydrate, reindex } = require('../catalog');
 const { STATUSES, PAY_STATUSES, setStatus, setPayment, orderItems, orderEvents } = require('../orders');
 const { invalidateContent } = require('../content');
-const { int, num, arr, slugify, token, csvParse, csvStringify, csvClean, dayKey, fmtDate, limited, zonedToUtc, normSearch } = require('../util');
+const { int, num, arr, slugify, token, csvParse, csvStringify, csvClean, dayKey, fmtDate, limited, zonedToUtc, normSearch, normPhone, isPhone, isEmail } = require('../util');
 const notify = require('../notify');
 const { sendMail, smtpConfig } = require('../mailer');
+const { sendInvoicePdf } = require('../invoice');
+const stats = require('../stats');
 const A = require('../views/admin');
 
 const SAFE_IMG = /^(\/uploads\/[\w\-./]+|\/assets\/[\w\-./]+|https:\/\/[^\s"'<>]+)$/;
 const cleanImg = (u) => { const s = String(u || '').trim(); return SAFE_IMG.test(s) && !s.includes('..') ? s : ''; };
 const str = (v, max = 500) => String(v ?? '').trim().slice(0, max);
+const safeJSONArr = (v) => { try { const a = JSON.parse(v || '[]'); return Array.isArray(a) ? a.map(cleanImg).filter(Boolean) : []; } catch { return []; } };
 const go = (ctx, url, flag, msg) => ctx.redirect(url + (url.includes('?') ? '&' : '?') + 'f=' + flag + (msg ? '&m=' + encodeURIComponent(msg) : ''));
 const csvSend = (ctx, name, rows) => { ctx.headers['Content-Disposition'] = `attachment; filename="${name}"`; ctx.send(csvStringify(rows), 200, 'text/csv; charset=utf-8'); };
+const allZones = () => all('SELECT id, name_en, name_ar FROM zones ORDER BY sort, id');
 const navCounts = () => ({ '/admin/orders': val("SELECT COUNT(*) FROM orders WHERE status = 'pending'"), '/admin/messages': val('SELECT COUNT(*) FROM messages WHERE read = 0') });
 
 // ---------- generic resources ----------
@@ -157,7 +161,8 @@ function saveProduct(id, b) {
     stock: int(b.stock), sort: int(b.sort), active: b.active ? 1 : 0, is_new: b.is_new ? 1 : 0, is_bestseller: b.is_bestseller ? 1 : 0, is_limited: b.is_limited ? 1 : 0, featured: b.featured ? 1 : 0,
     meta_title: str(b.meta_title, 200) || null, meta_desc: str(b.meta_desc, 300) || null, main_cat: int(b.main_cat) || null,
   };
-  if (!d.name_en || !d.name_ar) return { error: 'adm.err.names' };
+  if (!d.name_en && !d.name_ar) return { error: 'adm.err.names' };
+  d.name_en ||= d.name_ar; d.name_ar ||= d.name_en; // one language is enough — the other is copied (edit it any time)
   if (d.sale_price !== null && d.sale_price >= d.price) d.sale_price = null;
   let imgs = [];
   try { imgs = JSON.parse(b.images || '[]'); } catch { /* ignore */ }
@@ -296,26 +301,48 @@ module.exports = (app) => {
   });
 
   // ----- orders -----
-  app.get('/admin/orders', requireAdmin, (ctx) => {
-    const status = STATUSES.includes(ctx.query.status) ? ctx.query.status : '';
+  // orders list: status tabs + search + dropdown filters (period, payment, area)
+  const orderQuery = (ctx) => {
+    const status = STATUSES.includes(ctx.query.status) || ctx.query.status === 'active' ? ctx.query.status : '';
     const q = str(ctx.query.q, 80);
-    const where = [], p = [];
-    if (status) { where.push('status = ?'); p.push(status); }
-    if (q) { where.push('(number LIKE ? OR name LIKE ? OR phone LIKE ? OR email LIKE ?)'); p.push(...Array(4).fill(`%${q.replace(/[%_]/g, '')}%`)); }
-    const w = where.length ? 'WHERE ' + where.join(' AND ') : '';
-    const total = val(`SELECT COUNT(*) FROM orders ${w}`, ...p);
+    const { f, w, p } = stats.listFilters(ctx.query);
+    if (q) { w.push('(o.number LIKE ? OR o.name LIKE ? OR o.phone LIKE ? OR o.email LIKE ?)'); p.push(...Array(4).fill(`%${q.replace(/[%_]/g, '')}%`)); }
+    const base = { w: [...w], p: [...p] }; // without the status (for the tab counts)
+    if (status === 'active') w.push("o.status <> 'cancelled'");
+    else if (status) { w.push('o.status = ?'); p.push(status); }
+    return { status, q, f, sql: w.length ? 'WHERE ' + w.join(' AND ') : '', p, base };
+  };
+  app.get('/admin/orders', requireAdmin, (ctx) => {
+    const { status, q, f, sql, p, base } = orderQuery(ctx);
+    const total = val(`SELECT COUNT(*) FROM orders o ${sql}`, ...p);
     const per = 30, pages = Math.max(1, Math.ceil(total / per)), page = Math.min(pages, Math.max(1, int(ctx.query.page, 1)));
-    const counts = Object.fromEntries(all('SELECT status, COUNT(*) n FROM orders GROUP BY status').map((r) => [r.status, r.n]));
+    const counts = Object.fromEntries(all(`SELECT o.status, COUNT(*) n FROM orders o ${base.w.length ? 'WHERE ' + base.w.join(' AND ') : ''} GROUP BY o.status`, ...base.p).map((r) => [r.status, r.n]));
     counts.all = Object.values(counts).reduce((a, b) => a + b, 0);
-    return A.orders(ctx, { rows: all(`SELECT * FROM orders ${w} ORDER BY id DESC LIMIT ? OFFSET ?`, ...p, per, (page - 1) * per), total, page, pages, q, status, counts, statuses: STATUSES });
+    const sum = val(`SELECT COALESCE(SUM(o.total), 0) FROM orders o ${sql}`, ...p);
+    return A.orders(ctx, { rows: all(`SELECT * FROM orders o ${sql} ORDER BY o.id DESC LIMIT ? OFFSET ?`, ...p, per, (page - 1) * per), total, sum, page, pages, q, status, f, counts, statuses: STATUSES, payStatuses: PAY_STATUSES, zones: allZones() });
   });
-  app.get('/admin/orders/export.csv', requireAdmin, (ctx) => {
-    const status = STATUSES.includes(ctx.query.status) ? ctx.query.status : null;
-    const rows = all(`SELECT * FROM orders ${status ? 'WHERE status = ?' : ''} ORDER BY id DESC`, ...(status ? [status] : []));
-    const items = new Map();
-    for (const it of all('SELECT order_id, name, variant, qty FROM order_items')) { if (!items.has(it.order_id)) items.set(it.order_id, []); items.get(it.order_id).push(`${it.qty}x ${it.name}${it.variant ? ' (' + it.variant + ')' : ''}`); }
-    csvSend(ctx, `orders-${dayKey(new Date())}.csv`, [['number', 'date', 'status', 'payment_method', 'payment_status', 'name', 'phone', 'email', 'zone', 'city', 'address', 'notes', 'items', 'subtotal', 'discount', 'coupon', 'shipping', 'fee', 'total'],
+  // Excel-friendly CSV of orders (one row per order, items in one column)
+  const ordersCsv = (ctx, rows, name) => {
+    const ids = new Set(rows.map((o) => o.id)), items = new Map();
+    for (const it of all('SELECT order_id, name, variant, qty FROM order_items ORDER BY id')) { if (!ids.has(it.order_id)) continue; if (!items.has(it.order_id)) items.set(it.order_id, []); items.get(it.order_id).push(`${it.qty}x ${it.name}${it.variant ? ' (' + it.variant + ')' : ''}`); }
+    csvSend(ctx, name, [['number', 'date', 'status', 'payment_method', 'payment_status', 'name', 'phone', 'email', 'zone', 'city', 'address', 'notes', 'items', 'subtotal', 'discount', 'coupon', 'shipping', 'fee', 'total'],
       ...rows.map((o) => [o.number, fmtDate(o.created_at), o.status, o.payment_method, o.payment_status, o.name, o.phone, o.email, o.zone_name, o.city, o.address, o.notes, (items.get(o.id) || []).join('; '), o.subtotal, o.discount, o.coupon, o.shipping, o.fee, o.total])]);
+  };
+  app.get('/admin/orders/export.csv', requireAdmin, (ctx) => {
+    const { sql, p } = orderQuery(ctx);
+    ordersCsv(ctx, all(`SELECT * FROM orders o ${sql} ORDER BY o.id DESC`, ...p), `orders-${dayKey(new Date())}.csv`);
+  });
+
+  // ----- statistics (dropdown filters → numbers, chart, breakdowns, CSV) -----
+  app.get('/admin/stats', requireAdmin, (ctx) => {
+    const f = stats.readFilters(ctx.query);
+    return A.stats(ctx, { d: stats.compute(f, ctx.lang), zones: allZones(), statuses: STATUSES, payStatuses: PAY_STATUSES, counts: navCounts() });
+  });
+  app.get('/admin/stats/export.csv', requireAdmin, (ctx) => {
+    const f = stats.readFilters(ctx.query);
+    const [from, to] = stats.range(f);
+    const W = stats.where(f, from, to);
+    ordersCsv(ctx, all(`SELECT o.* FROM orders o WHERE ${W.sql} ORDER BY o.id DESC`, ...W.p), `orders-${from}-to-${to}.csv`);
   });
   const getOrder = (id) => { const o = one('SELECT * FROM orders WHERE id = ?', int(id)); if (!o) throw new HttpError(404); return o; };
   app.get('/admin/orders/:id', requireAdmin, (ctx) => {
@@ -323,6 +350,16 @@ module.exports = (app) => {
     return A.orderDetail(ctx, { o, items: orderItems(o.id), events: orderEvents(o.id), statuses: STATUSES, payStatuses: PAY_STATUSES, customer: o.user_id ? one('SELECT id, name FROM users WHERE id = ?', o.user_id) : null });
   });
   app.get('/admin/orders/:id/invoice', requireAdmin, (ctx) => { const o = getOrder(ctx.params.id); return A.invoice(ctx, { o, items: orderItems(o.id) }); });
+  // PDF invoice (?lang=ar|en, default = the customer's language) and "email it to the customer"
+  app.get('/admin/orders/:id/invoice.pdf', requireAdmin, (ctx) => sendInvoicePdf(ctx, getOrder(ctx.params.id), ctx.query.lang));
+  app.post('/admin/orders/:id/email-invoice', requireAdmin, async (ctx) => {
+    const o = getOrder(ctx.params.id);
+    if (!o.email) return go(ctx, `/admin/orders/${o.id}`, 'err', ctx.t('adm.err.no_email'));
+    if (!smtpConfig()) return go(ctx, `/admin/orders/${o.id}`, 'err', ctx.t('adm.alert.smtp'));
+    try { await notify.sendInvoice(o); } catch (e) { return go(ctx, `/admin/orders/${o.id}`, 'err', e.message.slice(0, 200)); }
+    run('INSERT INTO order_events (order_id, status, note) VALUES (?, ?, ?)', o.id, o.status, `Invoice emailed to ${o.email} by ${ctx.user.name}`);
+    return go(ctx, `/admin/orders/${o.id}`, 'mailed', o.email);
+  });
   app.post('/admin/orders/:id/status', requireAdmin, (ctx) => {
     const o = getOrder(ctx.params.id);
     const st = String(ctx.body.status);
@@ -333,7 +370,9 @@ module.exports = (app) => {
   });
   app.post('/admin/orders/:id/payment', requireAdmin, (ctx) => {
     const o = getOrder(ctx.params.id);
-    setPayment(o.id, String(ctx.body.payment_status), `by ${ctx.user.name}`);
+    const ps = String(ctx.body.payment_status);
+    const changed = setPayment(o.id, ps, `by ${ctx.user.name}`) === true;
+    if (changed && ps === 'paid' && ctx.body.notify_pay && o.email) notify.paymentConfirmed(one('SELECT * FROM orders WHERE id = ?', o.id)).catch(() => {});
     return go(ctx, `/admin/orders/${o.id}`, 'saved');
   });
   app.post('/admin/orders/:id/note', requireAdmin, (ctx) => { const o = getOrder(ctx.params.id); run('UPDATE orders SET admin_note = ? WHERE id = ?', str(ctx.body.admin_note, 2000), o.id); return go(ctx, `/admin/orders/${o.id}`, 'saved'); });
@@ -364,13 +403,74 @@ module.exports = (app) => {
   });
   app.get('/admin/products/import', requireAdmin, (ctx) => A.importPage(ctx));
   app.post('/admin/products/import', requireAdmin, (ctx) => A.importPage(ctx, importCSV(String(ctx.body.csv || ''))));
+  // helpers for the list actions (quick edit, show/hide, bulk)
+  const backTo = (ctx) => { const b = String(ctx.body.back || ''); return /^\/admin\/products(\?[\w\-=&%.+]*)?$/.test(b) ? b : '/admin/products'; };
+  const answer = (ctx, ok, extra = {}) => (ctx.wantsJSON ? ctx.json({ ok, ...extra }, ok ? 200 : 400) : go(ctx, backTo(ctx), ok ? 'saved' : 'err', extra.error));
+  // ----- bulk actions on the ticked products -----
+  const BULK = ['show', 'hide', 'new_on', 'new_off', 'best_on', 'best_off', 'sale', 'sale_off', 'cat_add', 'cat_remove', 'delete'];
+  app.post('/admin/products/bulk', requireAdmin, (ctx) => {
+    const ids = [...new Set(arr(ctx.body.ids).map(Number).filter((x) => x > 0))].slice(0, 1000);
+    const action = String(ctx.body.action || '');
+    if (!ids.length || !BULK.includes(action)) return go(ctx, backTo(ctx), 'err', ctx.t('adm.bulk_pick'));
+    const pct = num(ctx.body.percent), cat = int(ctx.body.cat);
+    if (action === 'sale' && !(pct > 0 && pct < 100)) return go(ctx, backTo(ctx), 'err', ctx.t('adm.bulk_percent'));
+    if (action.startsWith('cat_') && !one('SELECT 1 FROM categories WHERE id = ?', cat)) return go(ctx, backTo(ctx), 'err', ctx.t('adm.bulk_cat'));
+    const marks = ids.map(() => '?').join(',');
+    tx(() => {
+      const set = (sql, ...p) => run(`UPDATE products SET ${sql} WHERE id IN (${marks})`, ...p, ...ids);
+      if (action === 'show') set('active = 1');
+      if (action === 'hide') set('active = 0');
+      if (action === 'new_on') set('is_new = 1');
+      if (action === 'new_off') set('is_new = 0');
+      if (action === 'best_on') set('is_bestseller = 1');
+      if (action === 'best_off') set('is_bestseller = 0');
+      if (action === 'sale') set('sale_price = ROUND(price * ?, 2)', 1 - pct / 100);
+      if (action === 'sale_off') set('sale_price = NULL');
+      if (action === 'cat_add') for (const id of ids) run('INSERT OR IGNORE INTO product_categories (product_id, category_id) SELECT id, ? FROM products WHERE id = ?', cat, id);
+      if (action === 'cat_remove') { run(`DELETE FROM product_categories WHERE category_id = ? AND product_id IN (${marks})`, cat, ...ids); run(`UPDATE products SET main_cat = NULL WHERE main_cat = ? AND id IN (${marks})`, cat, ...ids); }
+      if (action === 'delete') { run(`DELETE FROM cart_items WHERE product_id IN (${marks})`, ...ids); run(`DELETE FROM products WHERE id IN (${marks})`, ...ids); }
+    });
+    if (action.startsWith('cat_')) ids.forEach(reindex);
+    invalidate();
+    return go(ctx, backTo(ctx), action === 'delete' ? 'deleted' : 'saved', ctx.t('adm.bulk_done', { n: ids.length }));
+  });
   app.get('/admin/products/:id', requireAdmin, (ctx) => A.productForm(ctx, { p: productForm(ctx.params.id), catTree: allCatTree() }));
   app.post('/admin/products/:id', requireAdmin, (ctx) => {
     const id = ctx.params.id === 'new' ? 'new' : int(ctx.params.id);
     if (id !== 'new' && !one('SELECT 1 FROM products WHERE id = ?', id)) throw new HttpError(404);
     const r = saveProduct(id, ctx.body);
-    if (r.error) return A.productForm(ctx, { p: { ...ctx.body, id: id === 'new' ? null : id, images: [], variants: [], catIds: arr(ctx.body.cats).map(Number) }, catTree: allCatTree(), error: ctx.t(r.error) });
+    if (r.error) { // show the form again with everything that was typed (shades included, so nothing is lost on the next save)
+      const b = ctx.body, at = (k, i) => arr(b[k])[i] ?? '';
+      const variants = arr(b.v_id).map((vid, i) => ({ id: +vid || '', name_en: at('v_name_en', i), name_ar: at('v_name_ar', i), color: at('v_color', i), sku: at('v_sku', i), stock: int(at('v_stock', i)), image: cleanImg(at('v_image', i)) }));
+      const slug = id === 'new' ? '' : one('SELECT slug FROM products WHERE id = ?', id)?.slug;
+      return A.productForm(ctx, { p: { ...b, id: id === 'new' ? null : id, slug: b.slug || slug, images: safeJSONArr(b.images), variants, catIds: arr(b.cats).map(Number), main_cat: int(b.main_cat) || null }, catTree: allCatTree(), error: ctx.t(r.error) });
+    }
+    if (ctx.body.next === 'new') return go(ctx, '/admin/products/new', 'saved');
+    if (ctx.body.next === 'list') return go(ctx, '/admin/products', 'saved');
     return go(ctx, `/admin/products/${r.id}`, 'saved');
+  });
+  // ----- quick edit from the list: price, sale price, stock (products without shades) -----
+  app.post('/admin/products/:id/quick', requireAdmin, (ctx) => {
+    const p = one('SELECT * FROM products WHERE id = ?', int(ctx.params.id));
+    if (!p) throw new HttpError(404);
+    const b = ctx.body, d = {};
+    if (b.price !== undefined && String(b.price).trim() !== '') d.price = Math.max(0, num(b.price));
+    if (b.sale_price !== undefined) d.sale_price = String(b.sale_price).trim() === '' ? null : Math.max(0, num(b.sale_price));
+    const price = d.price ?? p.price;
+    if (d.sale_price != null && d.sale_price >= price) return answer(ctx, false, { error: ctx.t('adm.err.sale_price') });
+    const hasShades = !!one('SELECT 1 FROM variants WHERE product_id = ?', p.id);
+    if (b.stock !== undefined && String(b.stock).trim() !== '' && !hasShades) d.stock = int(b.stock);
+    update('products', p.id, { ...d, updated_at: new Date().toISOString().replace('T', ' ').slice(0, 19) });
+    invalidate();
+    const fresh = hydrate([one('SELECT * FROM products WHERE id = ?', p.id)])[0];
+    return answer(ctx, true, { price: fresh.pi.price, regular: fresh.price, off: fresh.pi.off, stock: fresh.stock, label: ctx.money(fresh.pi.price) });
+  });
+  app.post('/admin/products/:id/toggle', requireAdmin, (ctx) => {
+    const p = one('SELECT id, active FROM products WHERE id = ?', int(ctx.params.id));
+    if (!p) throw new HttpError(404);
+    run('UPDATE products SET active = ? WHERE id = ?', p.active ? 0 : 1, p.id);
+    invalidate();
+    return answer(ctx, true, { active: p.active ? 0 : 1 });
   });
   app.post('/admin/products/:id/delete', requireAdmin, (ctx) => {
     tx(() => { run('DELETE FROM cart_items WHERE product_id = ?', int(ctx.params.id)); run('DELETE FROM products WHERE id = ?', int(ctx.params.id)); });
@@ -415,38 +515,89 @@ module.exports = (app) => {
     return go(ctx, `/admin/r/${ctx.params.res}`, 'deleted');
   });
 
-  // ----- customers -----
+  // ----- users: admins + customers -----
+  const adminCount = () => val("SELECT COUNT(*) FROM users WHERE role = 'admin'");
+  const readUser = (b) => ({
+    name: str(b.name, 80), email: str(b.email, 120).toLowerCase(), phone: normPhone(b.phone).slice(0, 20) || null,
+    role: b.role === 'admin' ? 'admin' : 'customer', newsletter: b.newsletter ? 1 : 0,
+  });
+  const userError = (ctx, d, id, pw, isNew) => {
+    if (d.name.length < 2) return ctx.t('err.required') + ': ' + ctx.t('co.name');
+    if (!isEmail(d.email)) return ctx.t('err.email');
+    if (d.phone && !isPhone(d.phone)) return ctx.t('err.phone');
+    if (one('SELECT 1 FROM users WHERE email = ? AND id <> ?', d.email, id || 0)) return ctx.t('acc.email_taken');
+    if ((isNew || pw) && pw.length < 8) return ctx.t('acc.password_hint');
+    return null;
+  };
   app.get('/admin/customers', requireAdmin, (ctx) => {
-    const q = str(ctx.query.q, 80);
-    const w = q ? 'WHERE u.name LIKE ? OR u.email LIKE ? OR u.phone LIKE ?' : '';
-    const p = q ? Array(3).fill(`%${q.replace(/[%_]/g, '')}%`) : [];
+    const q = str(ctx.query.q, 80), role = ['admin', 'customer'].includes(ctx.query.role) ? ctx.query.role : '';
+    const where = [], p = [];
+    if (role) { where.push('u.role = ?'); p.push(role); }
+    if (q) { where.push('(u.name LIKE ? OR u.email LIKE ? OR u.phone LIKE ?)'); p.push(...Array(3).fill(`%${q.replace(/[%_]/g, '')}%`)); }
+    const w = where.length ? 'WHERE ' + where.join(' AND ') : '';
     const total = val(`SELECT COUNT(*) FROM users u ${w}`, ...p);
     const per = 50, pages = Math.max(1, Math.ceil(total / per)), page = Math.min(pages, Math.max(1, int(ctx.query.page, 1)));
     const rows = all(`SELECT u.*, (SELECT COUNT(*) FROM orders o WHERE o.user_id = u.id) orders, (SELECT COALESCE(SUM(total), 0) FROM orders o WHERE o.user_id = u.id AND o.status <> 'cancelled') spent
-      FROM users u ${w} ORDER BY u.id DESC LIMIT ? OFFSET ?`, ...p, per, (page - 1) * per);
-    return A.customers(ctx, { rows, q, total, page, pages });
+      FROM users u ${w} ORDER BY (u.role = 'admin') DESC, u.id DESC LIMIT ? OFFSET ?`, ...p, per, (page - 1) * per);
+    const counts = Object.fromEntries(all('SELECT role, COUNT(*) n FROM users GROUP BY role').map((r) => [r.role, r.n]));
+    counts.all = (counts.admin || 0) + (counts.customer || 0);
+    return A.customers(ctx, { rows, q, role, total, page, pages, counts });
   });
-  app.get('/admin/customers/export.csv', requireAdmin, (ctx) => csvSend(ctx, 'customers.csv', [['name', 'email', 'phone', 'city', 'address', 'newsletter', 'joined'], ...all('SELECT * FROM users ORDER BY id').map((u) => [u.name, u.email, u.phone, u.city, u.address, u.newsletter, fmtDate(u.created_at)])]));
+  app.get('/admin/customers/export.csv', requireAdmin, (ctx) => csvSend(ctx, 'users.csv', [['name', 'role', 'email', 'phone', 'city', 'address', 'newsletter', 'joined'], ...all('SELECT * FROM users ORDER BY id').map((u) => [u.name, u.role, u.email, u.phone, u.city, u.address, u.newsletter, fmtDate(u.created_at)])]));
+  app.get('/admin/customers/new', requireAdmin, (ctx) => A.userNew(ctx));
+  app.post('/admin/customers/new', requireAdmin, async (ctx) => {
+    const d = readUser(ctx.body), pw = String(ctx.body.password || '');
+    const err = userError(ctx, d, 0, pw, true);
+    if (err) return A.userNew(ctx, { u: d, error: err });
+    const id = insert('users', { ...d, password: await hashPassword(pw), lang: ctx.lang });
+    if (d.newsletter) run('INSERT OR IGNORE INTO subscribers (email, lang) VALUES (?, ?)', d.email, ctx.lang);
+    return go(ctx, `/admin/customers/${id}`, 'saved');
+  });
   const getUser = (id) => { const u = one('SELECT * FROM users WHERE id = ?', int(id)); if (!u) throw new HttpError(404); return u; };
-  app.get('/admin/customers/:id', requireAdmin, (ctx) => { const u = getUser(ctx.params.id); return A.customer(ctx, { u, orders: all('SELECT * FROM orders WHERE user_id = ? ORDER BY id DESC', u.id) }); });
-  app.post('/admin/customers/:id/role', requireAdmin, (ctx) => {
+  const userOrders = (id) => all('SELECT * FROM orders WHERE user_id = ? ORDER BY id DESC LIMIT 100', id);
+  app.get('/admin/customers/:id', requireAdmin, (ctx) => { const u = getUser(ctx.params.id); return A.customer(ctx, { u, orders: userOrders(u.id) }); });
+  app.post('/admin/customers/:id/save', requireAdmin, async (ctx) => {
     const u = getUser(ctx.params.id);
-    if (u.id !== ctx.user.id) run('UPDATE users SET role = ? WHERE id = ?', ctx.body.role === 'admin' ? 'admin' : 'customer', u.id);
-    return go(ctx, `/admin/customers/${u.id}`, 'saved');
-  });
-  app.post('/admin/customers/:id/password', requireAdmin, async (ctx) => {
-    const u = getUser(ctx.params.id);
-    const pw = String(ctx.body.password || '');
-    if (pw.length < 8) return go(ctx, `/admin/customers/${u.id}`, 'err', ctx.t('acc.password_hint'));
-    run('UPDATE users SET password = ? WHERE id = ?', await hashPassword(pw), u.id);
-    run('DELETE FROM sessions WHERE user_id = ?', u.id);
-    return go(ctx, `/admin/customers/${u.id}`, 'saved');
+    const d = readUser(ctx.body), pw = String(ctx.body.password || '');
+    if (u.id === ctx.user.id) d.role = u.role; // you can't change your own role
+    let err = userError(ctx, d, u.id, pw, false);
+    if (!err && u.role === 'admin' && d.role !== 'admin' && adminCount() <= 1) err = ctx.t('adm.err.last_admin');
+    if (err) return A.customer(ctx, { u: { ...u, ...d }, orders: userOrders(u.id), error: err });
+    update('users', u.id, d);
+    if (pw) {
+      run('UPDATE users SET password = ?, must_change = 0 WHERE id = ?', await hashPassword(pw), u.id);
+      run('DELETE FROM sessions WHERE user_id = ? AND id <> ?', u.id, ctx.session.id); // sign them out elsewhere
+    }
+    return go(ctx, `/admin/customers/${u.id}`, 'saved'); // a removed admin loses access on their next click (role is checked every request)
   });
   app.post('/admin/customers/:id/delete', requireAdmin, (ctx) => {
     const u = getUser(ctx.params.id);
-    if (u.id === ctx.user.id) return go(ctx, `/admin/customers/${u.id}`, 'err');
-    tx(() => { run('UPDATE orders SET user_id = NULL WHERE user_id = ?', u.id); run('DELETE FROM sessions WHERE user_id = ?', u.id); run("DELETE FROM cart_items WHERE owner = ?", 'u:' + u.id); run("DELETE FROM wishlist WHERE owner = ?", 'u:' + u.id); run('DELETE FROM users WHERE id = ?', u.id); });
+    if (u.id === ctx.user.id) return go(ctx, `/admin/customers/${u.id}`, 'err', ctx.t('adm.err.self_delete'));
+    if (u.role === 'admin' && adminCount() <= 1) return go(ctx, `/admin/customers/${u.id}`, 'err', ctx.t('adm.err.last_admin'));
+    tx(() => { run('UPDATE orders SET user_id = NULL WHERE user_id = ?', u.id); run('DELETE FROM sessions WHERE user_id = ?', u.id); run('DELETE FROM cart_items WHERE owner = ?', 'u:' + u.id); run('DELETE FROM wishlist WHERE owner = ?', 'u:' + u.id); run('DELETE FROM users WHERE id = ?', u.id); });
     return go(ctx, '/admin/customers', 'deleted');
+  });
+
+  // ----- my account: change your own name, login email and password -----
+  app.get('/admin/account', requireAdmin, (ctx) => A.account(ctx));
+  app.post('/admin/account', requireAdmin, async (ctx) => {
+    const { t } = ctx;
+    const me = one('SELECT * FROM users WHERE id = ?', ctx.user.id);
+    const name = str(ctx.body.name, 80), email = str(ctx.body.email, 120).toLowerCase();
+    const pw = String(ctx.body.password || ''), pw2 = String(ctx.body.password2 || '');
+    if (limited('acct:' + ctx.user.id, 10, 900e3)) return A.account(ctx, { error: t('err.too_many') });
+    const err = !(await verifyPassword(String(ctx.body.current || ''), me.password)) ? t('acc.bad_password')
+      : name.length < 2 ? t('err.required') + ': ' + t('co.name') : !isEmail(email) ? t('err.email')
+        : one('SELECT 1 FROM users WHERE email = ? AND id <> ?', email, me.id) ? t('acc.email_taken')
+          : pw && pw.length < 8 ? t('acc.password_hint') : pw !== pw2 ? t('adm.err.pw_mismatch')
+            : pw && pw === cfg.STARTER_PASSWORD ? t('adm.err.starter_pw') : null;
+    if (err) return A.account(ctx, { error: err });
+    run('UPDATE users SET name = ?, email = ? WHERE id = ?', name, email, me.id);
+    if (pw) {
+      run('UPDATE users SET password = ?, must_change = 0 WHERE id = ?', await hashPassword(pw), me.id);
+      run('DELETE FROM sessions WHERE user_id = ? AND id <> ?', me.id, ctx.session.id);
+    }
+    return go(ctx, '/admin/account', 'saved');
   });
 
   // ----- messages & subscribers -----
@@ -471,6 +622,7 @@ module.exports = (app) => {
       if (k === 'promo_ends') v = zonedToUtc(v);
       if (k.startsWith('theme_') && !/^#[0-9a-f]{6}$/i.test(v.trim())) continue; // colours: hex only
       if (/_enabled$/.test(k)) v = v === '1' ? '1' : '0';
+      if (k === 'vat_rate') v = String(Math.min(100, Math.max(0, num(v))));
       d[k] = v.trim();
     }
     if (d.whatsapp) d.whatsapp = d.whatsapp.replace(/\D/g, '');

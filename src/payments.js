@@ -63,10 +63,11 @@ async function confirm(tranRef) {
   const st = j.payment_result?.response_status;
   const msg = `PayTabs ${tranRef}: ${st} ${j.payment_result?.response_message || ''}`.trim();
   const amountOk = Math.abs(+j.cart_amount - (o.charge_amount ?? o.total)) < 0.01 && String(j.cart_currency).toUpperCase() === String(o.charge_currency || '').toUpperCase();
-  if (st === 'A' && amountOk) setPayment(o.id, 'paid', msg, tranRef);
+  let justPaid = false; // true only for the one request that changed the order to "paid" (return + callback can race)
+  if (st === 'A' && amountOk) justPaid = setPayment(o.id, 'paid', msg, tranRef) === true;
   else if (st === 'A') console.error('[paytabs] amount/currency mismatch for', o.number, j.cart_amount, j.cart_currency);
   else if (['D', 'E', 'C', 'X', 'V'].includes(st)) setPayment(o.id, 'failed', msg, tranRef);
-  return one('SELECT * FROM orders WHERE id = ?', o.id);
+  return { ...one('SELECT * FROM orders WHERE id = ?', o.id), justPaid };
 }
 
 // PHP-style urlencode (PayTabs signs with http_build_query)

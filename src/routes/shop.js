@@ -11,6 +11,7 @@ const { int, num, isEmail, isPhone, normPhone, phoneTail, toAscii, limited } = r
 const { safeEqual } = require('../auth');
 const payments = require('../payments');
 const notify = require('../notify');
+const { sendInvoicePdf } = require('../invoice');
 const V = require('../views/shop');
 
 const filtersFrom = (q) => ({ min: num(q.min) || 0, max: num(q.max) || 0, stock: q.stock === '1', sale: q.sale === '1' });
@@ -141,10 +142,16 @@ module.exports = (app) => {
   });
 
   // ---------- orders ----------
-  app.get('/:lang/order/:number', (ctx) => {
+  // an order is visible with its secret link (?t=…), to the customer's account, or to admins
+  const visibleOrder = (ctx) => {
     const o = one('SELECT * FROM orders WHERE number = ?', ctx.params.number);
     const allowed = o && ((ctx.query.t && safeEqual(ctx.query.t, o.token)) || (ctx.user && (ctx.user.id === o.user_id || ctx.user.role === 'admin')));
     if (!allowed) throw new HttpError(404);
+    return o;
+  };
+  app.get('/:lang/order/:number/invoice.pdf', (ctx) => sendInvoicePdf(ctx, visibleOrder(ctx), ctx.lang));
+  app.get('/:lang/order/:number', (ctx) => {
+    const o = visibleOrder(ctx);
     const pay = ctx.query.pay;
     const payMsg = pay && o.payment_status === 'paid' ? { text: ctx.t('order.paid_ok'), type: 'ok' }
       : pay === 'failed' ? { text: ctx.t('order.pay_failed'), type: 'err' } : pay === 'error' ? { text: ctx.t('order.pay_error'), type: 'err' }

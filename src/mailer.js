@@ -48,8 +48,9 @@ const encHeader = (s) => (/^[\x20-\x7e]*$/.test(s) ? s : `=?UTF-8?B?${b64(s)}?=`
 const addrOnly = (s) => (String(s).match(/<([^>]+)>/) || [, String(s)])[1].trim();
 const cleanHeader = (s) => String(s || '').replace(/[\r\n]+/g, ' ').trim(); // block header injection
 
-function buildMessage({ from, fromName, to, subject, html, text, replyTo }) {
-  const boundary = 'b' + crypto.randomBytes(12).toString('hex');
+// attachments: [{ filename, content: Buffer, contentType }] — e.g. the PDF invoice
+function buildMessage({ from, fromName, to, subject, html, text, replyTo, attachments = [] }) {
+  const alt = 'a' + crypto.randomBytes(12).toString('hex'), mixed = 'm' + crypto.randomBytes(12).toString('hex');
   const domain = addrOnly(from).split('@')[1] || 'localhost';
   const head = [
     `From: ${fromName ? `${encHeader(cleanHeader(fromName))} <${addrOnly(from)}>` : addrOnly(from)}`,
@@ -59,14 +60,20 @@ function buildMessage({ from, fromName, to, subject, html, text, replyTo }) {
     `Date: ${new Date().toUTCString()}`,
     `Message-ID: <${crypto.randomBytes(10).toString('hex')}@${domain}>`,
     'MIME-Version: 1.0',
-    `Content-Type: multipart/alternative; boundary="${boundary}"`,
+    attachments.length ? `Content-Type: multipart/mixed; boundary="${mixed}"` : `Content-Type: multipart/alternative; boundary="${alt}"`,
   ].filter(Boolean).join('\r\n');
-  const part = (type, body) => `--${boundary}\r\nContent-Type: ${type}; charset=UTF-8\r\nContent-Transfer-Encoding: base64\r\n\r\n${wrap76(b64(body))}\r\n`;
+  const part = (type, body) => `--${alt}\r\nContent-Type: ${type}; charset=UTF-8\r\nContent-Transfer-Encoding: base64\r\n\r\n${wrap76(b64(body))}\r\n`;
   const plain = text || String(html).replace(/<style[\s\S]*?<\/style>/gi, '').replace(/<br\s*\/?>/gi, '\n').replace(/<\/(p|div|tr|h\d|li)>/gi, '\n').replace(/<[^>]+>/g, '').replace(/&nbsp;/g, ' ').replace(/\n{3,}/g, '\n\n').trim();
-  return `${head}\r\n\r\n${part('text/plain', plain)}${part('text/html', html)}--${boundary}--`;
+  const body = `${part('text/plain', plain)}${part('text/html', html)}--${alt}--`;
+  if (!attachments.length) return `${head}\r\n\r\n${body}`;
+  const files = attachments.map((a) => {
+    const name = String(a.filename || 'file').replace(/[^\w.-]+/g, '-');
+    return `--${mixed}\r\nContent-Type: ${a.contentType || 'application/octet-stream'}; name="${name}"\r\nContent-Transfer-Encoding: base64\r\nContent-Disposition: attachment; filename="${name}"\r\n\r\n${wrap76(Buffer.from(a.content).toString('base64'))}\r\n`;
+  }).join('');
+  return `${head}\r\n\r\n--${mixed}\r\nContent-Type: multipart/alternative; boundary="${alt}"\r\n\r\n${body}\r\n${files}--${mixed}--`;
 }
 
-async function sendMail({ to, subject, html, text, replyTo }) {
+async function sendMail({ to, subject, html, text, replyTo, attachments }) {
   const c = smtpConfig();
   const rcpts = [].concat(to || []).map((x) => String(x).trim()).filter(Boolean);
   if (!c || !rcpts.length) { console.log(`[mail] not sent (SMTP not configured): "${subject}" → ${rcpts.join(', ')}`); return false; }
@@ -87,18 +94,21 @@ async function sendMail({ to, subject, html, text, replyTo }) {
   try {
     await cmd(null, [220]);
     let ehlo = await cmd('EHLO ' + (addrOnly(c.from).split('@')[1] || 'localhost'), [250]);
+    let encrypted = c.secure;
     if (!c.secure && /\bSTARTTLS\b/i.test(ehlo.text)) {
+      encrypted = true;
       await cmd('STARTTLS', [220]);
       r.detach();
       sock = await new Promise((resolve, reject) => { const t = tls.connect({ socket: sock, servername: c.host }, () => resolve(t)); t.once('error', reject); });
       r = reader(sock);
       ehlo = await cmd('EHLO ' + (addrOnly(c.from).split('@')[1] || 'localhost'), [250]);
     }
+    if (c.user && !encrypted && !/^(localhost|127\.0\.0\.1|::1)$/i.test(c.host)) throw new Error('The mail server did not offer encryption (STARTTLS), so the password was not sent. Use port 465 (SSL) or 587 (TLS).');
     if (c.user) await cmd('AUTH PLAIN ' + b64(`\0${c.user}\0${c.pass}`), [235]);
     await cmd(`MAIL FROM:<${addrOnly(c.from)}>`, [250]);
     for (const rc of rcpts) await cmd(`RCPT TO:<${addrOnly(rc)}>`, [250, 251]);
     await cmd('DATA', [354]);
-    await cmd(buildMessage({ from: c.from, fromName: s.store_name_en, to: rcpts, subject, html, text, replyTo }) + '\r\n.', [250]);
+    await cmd(buildMessage({ from: c.from, fromName: s.store_name_en, to: rcpts, subject, html, text, replyTo, attachments }) + '\r\n.', [250]);
     await cmd('QUIT', [221]).catch(() => {});
     return true;
   } finally {

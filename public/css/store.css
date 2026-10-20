@@ -82,14 +82,10 @@ html[lang='en'] .promo-text { text-transform: uppercase; letter-spacing: .06em; 
 .hdr-end { justify-content: flex-end; }
 .logo { display: flex; align-items: center; justify-content: center; color: var(--ink); }
 .logo img { max-height: 44px; width: auto; }
-.wordmark { display: inline-flex; flex-direction: column; align-items: center; font-size: 28px; font-weight: 600; line-height: 1; text-transform: uppercase; }
-.wm-main { letter-spacing: .32em; padding-inline-start: .32em; }
-.wm-sub { font-size: .34em; font-weight: 500; letter-spacing: .62em; padding-inline-start: .62em; margin-top: 5px; color: var(--ink-2); }
-html[lang='ar'] .wordmark { font-weight: 700; font-size: 30px; }
-html[lang='ar'] .wm-main, html[lang='ar'] .wm-sub { letter-spacing: 0; padding: 0; }
-html[lang='ar'] .wm-sub { font-size: .46em; margin-top: 2px; }
-.wordmark.sm { font-size: 20px; }
-.ftr-wm { align-items: flex-start; }
+.wordmark { display: inline-block; font-size: 24px; font-weight: 600; line-height: 1.1; text-transform: uppercase; letter-spacing: .18em; padding-inline-start: .18em; text-align: center; white-space: nowrap; }
+html[lang='ar'] .wordmark { font-weight: 700; font-size: 26px; letter-spacing: 0; padding: 0; }
+.wordmark.sm { font-size: 17px; }
+.ftr-wm { font-size: 20px; text-align: start; padding: 0; }
 .icon-btn { position: relative; width: 42px; height: 42px; display: inline-grid; place-items: center; border-radius: 50%; transition: background .2s; }
 .icon-btn:hover { background: var(--soft); color: var(--ink); }
 .count { position: absolute; top: 3px; inset-inline-end: 1px; min-width: 18px; height: 18px; padding: 0 5px; border-radius: 99px; background: var(--ink); color: #fff; font-size: 11px; font-weight: 600; display: grid; place-items: center; line-height: 1; }
@@ -414,6 +410,7 @@ html[lang='en'] .badge { text-transform: uppercase; letter-spacing: .05em; }
 .thanks .ic.big { width: 70px; height: 70px; color: var(--ok); border: 2px solid currentColor; border-radius: 50%; padding: 14px; stroke-width: 2; }
 .thanks p { color: var(--muted); max-width: 520px; }
 .pay-again { display: flex; justify-content: center; margin: 12px 0; }
+.inv-link { display: flex; justify-content: center; margin: 4px 0 14px; }
 .order-meta { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin: 18px 0; }
 .order-meta > div { background: var(--soft); border-radius: 12px; padding: 14px; display: grid; gap: 4px; }
 .order-meta span { font-size: 12px; color: var(--muted); }
@@ -528,10 +525,9 @@ body.has-cookie .wa-float { bottom: 96px; }
   .hdr.search-open .hdr-search { display: flex; }
   .hdr-search > button { inset-inline-end: 20px; }
   .suggest { inset-inline: 16px; width: auto; }
-  .wordmark { font-size: 22px; }
-  .wm-main { letter-spacing: .22em; padding-inline-start: .22em; }
-  html[lang='ar'] .wordmark { font-size: 24px; }
-  .lang-btn { padding: 6px; font-size: 13px; }
+  .logo .wordmark { font-size: 15px; letter-spacing: .08em; padding-inline-start: .08em; white-space: normal; max-width: 42vw; }
+  html[lang='ar'] .logo .wordmark { font-size: 19px; }
+  .hdr-end .lang-btn { display: none; } /* language switch lives in the menu on phones */
   .hero-in { grid-template-columns: 1fr; text-align: center; padding-block: 28px 48px; gap: 8px; min-height: 0; }
   .hero-text { justify-items: center; margin-inline: auto; order: 2; }
   .hero-art { order: 1; }

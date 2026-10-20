@@ -1,10 +1,13 @@
 'use strict';
-// Notifications: customer/admin emails (bilingual) + optional Telegram alerts for new orders.
+// Notifications: customer/admin emails (bilingual, with the PDF invoice attached) + optional Telegram alerts.
+//  • Cash on delivery: the customer gets the confirmation + invoice as soon as the order is placed.
+//  • Card: the customer gets it once the payment is confirmed (so the invoice already says "Paid").
 const { all, settings } = require('./db');
-const { sendMail } = require('./mailer');
+const { sendMail, smtpConfig } = require('./mailer');
 const { tr, loc } = require('./i18n');
 const { esc } = require('./html');
 const { money } = require('./util');
+const { invoicePDF, invoiceFileName } = require('./invoice');
 const cfg = require('./config');
 
 const base = () => cfg.BASE_URL || '';
@@ -15,12 +18,12 @@ function shell(lang, title, inner) {
   const dir = lang === 'ar' ? 'rtl' : 'ltr';
   const align = lang === 'ar' ? 'right' : 'left';
   return `<!doctype html><html lang="${lang}" dir="${dir}"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width"><title>${esc(title)}</title></head>
-<body style="margin:0;background:#f5f2ef;font-family:Tahoma,Arial,sans-serif;color:#151515">
-<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#f5f2ef;padding:24px 0"><tr><td align="center">
+<body style="margin:0;background:#f5f5f5;font-family:Tahoma,Arial,sans-serif;color:#151515">
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#f5f5f5;padding:24px 0"><tr><td align="center">
 <table role="presentation" width="600" cellpadding="0" cellspacing="0" style="max-width:600px;width:100%;background:#fff;border-radius:12px;overflow:hidden" dir="${dir}">
-<tr><td style="background:#151515;color:#fff;padding:20px 28px;font-size:22px;letter-spacing:3px;text-align:center">${esc(loc(s, 'store_name', lang))}</td></tr>
+<tr><td style="background:#000;color:#fff;padding:20px 28px;font-size:22px;letter-spacing:3px;text-align:center">${esc(loc(s, 'store_name', lang))}</td></tr>
 <tr><td style="padding:28px;text-align:${align};font-size:15px;line-height:1.6">${inner}</td></tr>
-<tr><td style="padding:18px 28px;background:#faf8f6;color:#777;font-size:12px;text-align:center">${esc(loc(s, 'store_name', lang))} · ${esc(s.phone || '')} · ${esc(s.email || '')}</td></tr>
+<tr><td style="padding:18px 28px;background:#fafafa;color:#777;font-size:12px;text-align:center">${esc(loc(s, 'store_name', lang))} · <span dir="ltr">${esc(s.phone || '')}</span> · ${esc(s.email || '')}</td></tr>
 </table></td></tr></table></body></html>`;
 }
 
@@ -39,9 +42,28 @@ function orderTable(o, items, lang) {
 }
 
 const orderLink = (o) => (base() ? `${base()}/${o.lang}/order/${encodeURIComponent(o.number)}?t=${o.token}` : '');
-const button = (href, label) => (href ? `<p style="text-align:center;margin:24px 0"><a href="${esc(href)}" style="background:#151515;color:#fff;text-decoration:none;padding:12px 26px;border-radius:30px;display:inline-block">${esc(label)}</a></p>` : '');
+const button = (href, label) => (href ? `<p style="text-align:center;margin:24px 0"><a href="${esc(href)}" style="background:#000;color:#fff;text-decoration:none;padding:12px 26px;border-radius:30px;display:inline-block">${esc(label)}</a></p>` : '');
 
 async function safe(fn) { try { return await fn(); } catch (e) { console.error('[notify]', e.message); return false; } }
+
+// The order's PDF invoice as an email attachment ([] when switched off in Settings → Invoices)
+function invoiceFiles(o, lang, force) {
+  if (!smtpConfig() || (!force && settings().invoice_email_enabled === '0')) return [];
+  try { return [{ filename: invoiceFileName(o), content: invoicePDF(o, lang), contentType: 'application/pdf' }]; }
+  catch (e) { console.error('[invoice]', e.message); return []; }
+}
+
+// Customer email with order summary, a link to the order page and the invoice
+function customerMail(o, { subject, title, intro, force }) {
+  const L = o.lang || 'ar';
+  const t = (k, v) => tr(L, k, v);
+  const items = all('SELECT * FROM order_items WHERE order_id = ? ORDER BY id', o.id);
+  const files = invoiceFiles(o, L, force);
+  return sendMail({
+    to: o.email, subject, attachments: files,
+    html: shell(L, title, `<h2 style="margin:0 0 8px">${esc(title)}</h2><p>${esc(intro)}</p>${orderTable(o, items, L)}${files.length ? `<p style="color:#555">📎 ${esc(t('inv.attached'))}</p>` : ''}${button(orderLink(o), t('mail.view_order'))}`),
+  });
+}
 
 async function telegram(text) {
   const s = settings();
@@ -56,26 +78,58 @@ async function telegram(text) {
 
 async function orderPlaced(o) {
   const s = settings();
-  const items = all('SELECT * FROM order_items WHERE order_id = ?', o.id);
+  const items = all('SELECT * FROM order_items WHERE order_id = ? ORDER BY id', o.id);
   const L = o.lang || 'ar';
   const t = (k, v) => tr(L, k, v);
   const jobs = [];
-  if (o.email) {
-    jobs.push(safe(() => sendMail({
-      to: o.email, subject: t('mail.order_subject', { n: o.number, store: loc(s, 'store_name', L) }),
-      html: shell(L, t('order.thanks'), `<h2 style="margin:0 0 8px">${esc(t('order.thanks'))}</h2><p>${esc(t('mail.order_intro', { name: o.name, n: o.number }))}</p>${orderTable(o, items, L)}${button(orderLink(o), t('mail.view_order'))}`),
-    })));
+  if (o.email && o.payment_method !== 'card') {
+    jobs.push(safe(() => customerMail(o, { subject: t('mail.order_subject', { n: o.number, store: loc(s, 'store_name', L) }), title: t('order.thanks'), intro: t('mail.order_intro', { name: o.name, n: o.number }) })));
   }
   const adminTo = s.notify_email || s.email;
   const A = 'en';
   if (adminTo) {
     jobs.push(safe(() => sendMail({
       to: adminTo, replyTo: o.email || undefined, subject: `🛍 New order ${o.number} — ${money(o.total, sym())} (${o.payment_method.toUpperCase()})`,
+      attachments: invoiceFiles(o, L),
       html: shell(A, 'New order', `<h2 style="margin:0 0 8px">New order ${esc(o.number)}</h2>${orderTable(o, items, A)}${o.notes ? `<p><b>Notes:</b> ${esc(o.notes)}</p>` : ''}${button(base() ? `${base()}/admin/orders/${o.id}` : '', 'Open in admin')}`),
     })));
   }
   jobs.push(safe(() => telegram(`🛍 New order ${o.number}\n${o.name} — ${o.phone}\n${o.city} · ${o.zone_name}\n${items.map((i) => `• ${i.qty}× ${i.name}${i.variant ? ' — ' + i.variant : ''}`).join('\n')}\nTotal: ${money(o.total, sym())} · ${o.payment_method.toUpperCase()}${o.notes ? '\nNotes: ' + o.notes : ''}`)));
   return Promise.all(jobs);
+}
+
+// Card payment confirmed (called once, when the order changes to "paid")
+async function paymentReceived(o) {
+  const s = settings();
+  const L = o.lang || 'ar';
+  const t = (k, v) => tr(L, k, v);
+  const jobs = [safe(() => telegram(`✅ Payment received for ${o.number}: ${money(o.total, sym())}${o.status === 'cancelled' ? '\n⚠ The order was cancelled — please refund the customer.' : ''}`))];
+  if (o.email && o.status !== 'cancelled') {
+    jobs.push(safe(() => customerMail(o, { subject: t('mail.paid_subject', { n: o.number, store: loc(s, 'store_name', L) }), title: t('order.paid_ok'), intro: t('mail.paid_intro', { name: o.name, n: o.number }) })));
+  }
+  const adminTo = s.notify_email || s.email;
+  if (adminTo) {
+    jobs.push(safe(() => sendMail({
+      to: adminTo, subject: `✅ Payment received ${o.number} — ${money(o.total, sym())}`, attachments: invoiceFiles(o, L),
+      html: shell('en', 'Payment received', `<p>The card payment for order <b>${esc(o.number)}</b> was confirmed (${esc(money(o.total, sym()))}).${o.status === 'cancelled' ? ' <b>The order was cancelled before the payment arrived — please refund the customer.</b>' : ''}</p>${button(base() ? `${base()}/admin/orders/${o.id}` : '', 'Open in admin')}`),
+    })));
+  }
+  return Promise.all(jobs);
+}
+
+// Admin marked the order as paid (e.g. cash collected, or a card payment confirmed by hand): receipt + invoice
+function paymentConfirmed(o) {
+  const s = settings(), L = o.lang || 'ar', t = (k, v) => tr(L, k, v);
+  if (o.payment_method === 'card') return customerMail(o, { subject: t('mail.paid_subject', { n: o.number, store: loc(s, 'store_name', L) }), title: t('order.paid_ok'), intro: t('mail.paid_intro', { name: o.name, n: o.number }), force: true });
+  return sendInvoice(o);
+}
+
+// Admin → order → "Email invoice to customer" (throws so the admin sees why it failed)
+function sendInvoice(o) {
+  const s = settings();
+  const L = o.lang || 'ar';
+  const t = (k, v) => tr(L, k, v);
+  return customerMail(o, { subject: t('mail.invoice_subject', { n: o.number, store: loc(s, 'store_name', L) }), title: loc(s, 'invoice_title', L) || t('inv.title'), intro: t('mail.invoice_intro', { name: o.name, n: o.number }), force: true });
 }
 
 async function orderStatus(o, status) {
@@ -87,10 +141,6 @@ async function orderStatus(o, status) {
     to: o.email, subject: t('mail.status_subject', { n: o.number, status: t('status.' + status), store: loc(s, 'store_name', L) }),
     html: shell(L, t('status.' + status), `<h2 style="margin:0 0 8px">${esc(t('mail.status_title', { status: t('status.' + status) }))}</h2><p>${esc(t('mail.status_' + status, { n: o.number }))}</p>${button(orderLink(o), t('mail.view_order'))}`),
   }));
-}
-
-async function paymentReceived(o) {
-  return safe(() => telegram(`✅ Payment received for ${o.number}: ${money(o.total, sym())}`));
 }
 
 async function passwordReset(user, link, lang) {
@@ -106,4 +156,4 @@ async function contactMessage(m) {
   return Promise.all(jobs);
 }
 
-module.exports = { orderPlaced, orderStatus, paymentReceived, passwordReset, contactMessage, telegram };
+module.exports = { orderPlaced, orderStatus, paymentReceived, paymentConfirmed, sendInvoice, passwordReset, contactMessage, telegram };

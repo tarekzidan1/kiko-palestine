@@ -123,6 +123,7 @@ function ensureColumn(table, col, def) {
   if (!db.prepare(`PRAGMA table_info(${table})`).all().some((c) => c.name === col)) db.exec(`ALTER TABLE ${table} ADD COLUMN ${col} ${def}`);
 }
 ensureColumn('coupons', 'per_customer', 'INTEGER DEFAULT 0');
+ensureColumn('users', 'must_change', 'INTEGER DEFAULT 0'); // 1 = still using the starting admin password
 
 // ---------- query helpers (prepared statements are cached) ----------
 const cache = new Map();
@@ -180,6 +181,9 @@ const DEFAULTS = {
   smtp_host: '', smtp_port: '465', smtp_user: '', smtp_pass: '', smtp_from: '', notify_email: '',
   telegram_token: '', telegram_chat: '',
   meta_title_en: '', meta_title_ar: '', meta_desc_en: '', meta_desc_ar: '',
+  // PDF invoices (Admin → Settings → Invoices)
+  invoice_title_en: 'Invoice', invoice_title_ar: 'فاتورة', company_name: '', tax_id: '', vat_rate: '0',
+  invoice_note_en: '', invoice_note_ar: '', invoice_email_enabled: '1',
   // theme colours (Admin → Settings → Theme)
   theme_ink: '#000000', theme_accent: '#000000', theme_sale: '#000000', theme_soft: '#f5f5f5',
 };
@@ -187,7 +191,19 @@ let settingsCache = null;
 function settings() {
   if (!settingsCache) {
     settingsCache = { ...DEFAULTS };
-    for (const r of all('SELECT key, value FROM settings')) settingsCache[r.key] = r.value;
+    run("UPDATE pages SET body_ar = replace(body_ar, 'زهرة فلسطين متجر جمال إلكتروني من فلسطين.', 'كيكو فلسطين متجر جمال إلكتروني من فلسطين.') WHERE slug='about' AND body_ar LIKE 'زهرة فلسطين متجر جمال إلكتروني من فلسطين.%'");
+    for (const r of all('SELECT key, value FROM settings')) {
+      const migrated = {
+        store_name_en: ['ZAHRA Palestine'],
+        store_name_ar: ['زهرة فلسطين'],
+        order_prefix: ['ZH-'],
+      }[r.key];
+      if (migrated && migrated.includes(r.value)) {
+        const value = DEFAULTS[r.key];
+        run('UPDATE settings SET value=? WHERE key=?', value, r.key);
+        settingsCache[r.key] = value;
+      } else settingsCache[r.key] = r.value;
+    }
     // .env overrides for secrets
     if (cfg.PAYTABS_PROFILE_ID) settingsCache.paytabs_profile_id = cfg.PAYTABS_PROFILE_ID;
     if (cfg.PAYTABS_SERVER_KEY) settingsCache.paytabs_server_key = cfg.PAYTABS_SERVER_KEY;

@@ -328,6 +328,7 @@ function orderView(ctx, o, items, events, opts = {}) {
   ${opts.fresh ? html`<div class="thanks">${icon('check', 'big')}<h1>${t('order.thanks')}</h1><p>${t(isCard && o.payment_status !== 'paid' ? 'order.thanks_card_pending' : 'order.thanks_text', { n: o.number })}</p></div>` : html`<h1>${t('order.title', { n: o.number })}</h1>`}
   ${opts.payMsg ? alert(opts.payMsg.text, opts.payMsg.type) : ''}
   ${opts.canPay ? html`<form class="pay-again" method="post" action="/pay/retry">${csrfField(ctx)}<input type="hidden" name="number" value="${o.number}"><input type="hidden" name="t" value="${o.token}"><button class="btn btn-dark">${icon('card')} ${t('order.pay_now', { amount: ctx.money(o.total) })}</button></form>` : ''}
+  <p class="inv-link"><a class="btn btn-ghost btn-sm" href="/${lang}/order/${encodeURIComponent(o.number)}/invoice.pdf?t=${o.token}" target="_blank" rel="noopener" data-invoice>${icon('invoice')} ${t('inv.download')}</a></p>
   <div class="order-meta">
     <div><span>${t('order.number')}</span><strong dir="ltr">${o.number}</strong></div>
     <div><span>${t('order.date')}</span><strong dir="ltr">${fmtDate(o.created_at)}</strong></div>
